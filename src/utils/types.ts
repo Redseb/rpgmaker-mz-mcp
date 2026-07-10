@@ -136,6 +136,51 @@ export interface EnemyAction {
   rating: number;
 }
 
+/**
+ * A troop (`data/Troops.json`): a battle group of enemy `members` plus optional
+ * battle-event `pages`. The file is a 1-indexed array (slot 0 null, index === id).
+ */
+export interface Troop {
+  id: number;
+  name: string;
+  members: TroopMember[];
+  pages: TroopPage[];
+}
+
+/** One placed enemy in a troop; `enemyId` references `data/Enemies.json`. */
+export interface TroopMember {
+  enemyId: number;
+  x: number;
+  y: number;
+  hidden: boolean;
+}
+
+/**
+ * A troop battle-event page: the same event-command `list` format map events use,
+ * gated by battle-specific `conditions` and repeated per `span` (0 battle / 1 turn
+ * / 2 moment). Note the conditions carry `enemyIndex` (troop slot), not an id.
+ */
+export interface TroopPage {
+  conditions: TroopPageConditions;
+  list: EventCommand[];
+  span: number;
+}
+
+export interface TroopPageConditions {
+  actorHp: number;
+  actorId: number;
+  actorValid: boolean;
+  enemyHp: number;
+  enemyIndex: number;
+  enemyValid: boolean;
+  switchId: number;
+  switchValid: boolean;
+  turnA: number;
+  turnB: number;
+  turnEnding: boolean;
+  turnValid: boolean;
+}
+
 export interface MapData {
   autoplayBgm: boolean;
   autoplayBgs: boolean;
