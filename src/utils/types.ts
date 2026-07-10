@@ -424,3 +424,14 @@ export interface TestBattler {
   equips: number[];
   level: number;
 }
+
+export interface Tileset {
+  id: number;
+  name: string;
+  mode: number;
+  note: string;
+  /** The 9 image sheet filenames, positional: [A1,A2,A3,A4,A5,B,C,D,E]; '' = unused. */
+  tilesetNames: string[];
+  /** One bit-packed flag word per tile id (index === tile id, length 8192). */
+  flags: number[];
+}
