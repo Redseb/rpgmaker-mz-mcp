@@ -22,4 +22,12 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    // Skill tooling (Phase 3f tileset-catalog): standalone Node scripts, not part
+    // of the server build — give them Node globals so they lint cleanly.
+    files: ['.claude/skills/**/*.mjs'],
+    languageOptions: {
+      globals: { process: 'readonly', Buffer: 'readonly', console: 'readonly' },
+    },
+  },
 );
