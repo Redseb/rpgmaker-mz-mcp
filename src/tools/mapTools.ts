@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { readJsonFile, getMapPath, getDataPath, fileExists } from '../utils/fileHandler.js';
-import { commitChange } from '../utils/commit.js';
+import { commitChange, commitDelete } from '../utils/commit.js';
 import { MapData, MapEvent, MapInfo, EventCommand } from '../utils/types.js';
 import { ToolDefinition } from '../registry.js';
 import { validateEvent } from '../validation/eventCommands.js';
@@ -147,6 +147,129 @@ export async function createMap(
   await commitChange(getDataPath(projectPath, 'MapInfos.json'), infos);
 
   return { mapId: newId, mapInfo, map };
+}
+
+/**
+ * Delete a map: remove its entry from the map tree (`data/MapInfos.json`) and
+ * delete its `data/MapNNN.json` file. Any child maps are **reparented** to the
+ * deleted map's own parent rather than deleted with it — so a whole town/dungeon
+ * sub-tree isn't wiped by removing one node. Both the tree rewrite and the file
+ * deletion go through the commit choke point, so a dry-run previews the tree
+ * change and the file removal together.
+ *
+ * Does not touch `System.json`; if the deleted map happens to be the editor's
+ * open/start map that reference is left dangling (the editor tolerates it), same
+ * hands-off stance `create_map` takes toward `System.json`.
+ */
+export async function deleteMap(
+  projectPath: string,
+  mapId: number,
+): Promise<{ mapId: number; reparentedTo: number; reparentedChildren: number[] }> {
+  const infos = await getMapInfos(projectPath);
+
+  const target = infos[mapId];
+  if (!target) {
+    throw new Error(`Map ${mapId} does not exist in the map tree`);
+  }
+
+  // Reparent the deleted map's direct children onto its parent so they aren't
+  // orphaned (parentId pointing at a now-gone map).
+  const reparentedTo = target.parentId;
+  const reparentedChildren: number[] = [];
+  for (const info of infos) {
+    if (info && info.parentId === mapId) {
+      info.parentId = reparentedTo;
+      reparentedChildren.push(info.id);
+    }
+  }
+
+  // Drop the tree entry, preserving the 1-indexed array shape (slot -> null).
+  infos[mapId] = null;
+
+  // Rewrite the tree, then delete the map file — both via the commit choke
+  // point so dry-run previews both operations.
+  await commitChange(getDataPath(projectPath, 'MapInfos.json'), infos);
+  await commitDelete(getMapPath(projectPath, mapId));
+
+  return { mapId, reparentedTo, reparentedChildren };
+}
+
+/** A single map-tree edit: reparent, reorder, rename, or expand/collapse a map. */
+export interface MapTreeUpdate {
+  mapId: number;
+  parentId?: number;
+  order?: number;
+  name?: string;
+  expanded?: boolean;
+}
+
+/**
+ * Walk each map's parent chain to the root, throwing if a cycle is found (a map
+ * that is transitively its own ancestor). Catches self-parenting and longer
+ * loops that would otherwise make the editor's tree render infinitely.
+ */
+function assertNoTreeCycles(infos: (MapInfo | null)[]): void {
+  for (const start of infos) {
+    if (!start) continue;
+    const seen = new Set<number>([start.id]);
+    let parentId = start.parentId;
+    while (parentId !== 0) {
+      if (seen.has(parentId)) {
+        throw new Error(`Map tree cycle detected involving map ${start.id}`);
+      }
+      seen.add(parentId);
+      const parent = infos[parentId];
+      if (!parent) break;
+      parentId = parent.parentId;
+    }
+  }
+}
+
+/**
+ * Edit the map tree (`data/MapInfos.json`) without touching any map's tiles or
+ * events: reparent (move under a different node / to the top level), reorder
+ * siblings, rename, or expand/collapse. Applies a batch of per-map updates, then
+ * validates the whole tree stays acyclic before committing. Every referenced map
+ * (and any non-zero `parentId`) must already exist.
+ */
+export async function updateMapTree(
+  projectPath: string,
+  updates: MapTreeUpdate[],
+): Promise<{ updated: MapInfo[] }> {
+  const infos = await getMapInfos(projectPath);
+
+  // Validate every target exists before mutating anything, so a bad update in
+  // the batch can't leave a partially-applied tree.
+  for (const update of updates) {
+    if (!infos[update.mapId]) {
+      throw new Error(`Map ${update.mapId} does not exist in the map tree`);
+    }
+    if (update.parentId !== undefined) {
+      if (update.parentId === update.mapId) {
+        throw new Error(`Map ${update.mapId} cannot be its own parent`);
+      }
+      if (update.parentId !== 0 && !infos[update.parentId]) {
+        throw new Error(`parentId ${update.parentId} does not match any existing map`);
+      }
+    }
+  }
+
+  const updated: MapInfo[] = [];
+  for (const update of updates) {
+    const info = infos[update.mapId]!;
+    if (update.parentId !== undefined) info.parentId = update.parentId;
+    if (update.order !== undefined) info.order = update.order;
+    if (update.name !== undefined) info.name = update.name;
+    if (update.expanded !== undefined) info.expanded = update.expanded;
+    updated.push(info);
+  }
+
+  // A reparent can introduce a cycle (A under B, B under A); reject before write.
+  assertNoTreeCycles(infos);
+
+  await commitChange(getDataPath(projectPath, 'MapInfos.json'), infos);
+
+  return { updated };
 }
 
 /**
@@ -412,6 +535,36 @@ export const mapToolDefinitions: ToolDefinition[] = [
         parentId: args.parentId,
         tilesetId: args.tilesetId,
       }),
+  },
+  {
+    name: 'delete_map',
+    mutates: true,
+    description:
+      "Delete a map: remove its entry from the map tree (MapInfos.json) and delete its data/MapNNN.json file. The deleted map's direct children are reparented onto its parent (not deleted), so removing one node doesn't wipe a whole sub-tree. Does not touch System.json.",
+    inputSchema: {
+      mapId: z.number().int().positive().describe('The ID of the map to delete'),
+    },
+    handler: (ctx, args) => deleteMap(ctx.projectPath, args.mapId),
+  },
+  {
+    name: 'update_map_tree',
+    mutates: true,
+    description:
+      'Edit the map tree (MapInfos.json) only — reparent, reorder, rename, or expand/collapse maps without touching their tiles or events. Takes a batch of per-map updates; every referenced map (and any non-zero parentId) must exist, and the resulting tree must stay acyclic.',
+    inputSchema: {
+      updates: z
+        .array(
+          z.object({
+            mapId: z.number().int().positive().describe('The map to update'),
+            parentId: z.number().int().optional().describe('New parent map id; 0 = top level'),
+            order: z.number().int().optional().describe('New sort order among siblings'),
+            name: z.string().optional().describe('New tree display name'),
+            expanded: z.boolean().optional().describe('Whether the node is expanded in the tree'),
+          }),
+        )
+        .describe('One or more per-map tree edits to apply together'),
+    },
+    handler: (ctx, args) => updateMapTree(ctx.projectPath, args.updates),
   },
   {
     name: 'get_map_events',

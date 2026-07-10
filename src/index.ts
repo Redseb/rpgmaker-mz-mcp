@@ -49,6 +49,7 @@ async function runTool(
     wouldChange: commitCtx.commits.map((commit) => ({
       file: basename(commit.path),
       changed: commit.changed,
+      ...(commit.deleted ? { deleted: true } : {}),
       diff: commit.diff,
     })),
   };

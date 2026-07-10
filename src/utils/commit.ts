@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from 'async_hooks';
 import { readFile } from 'fs/promises';
-import { writeJsonFile } from './fileHandler.js';
+import { writeJsonFile, deleteFile, fileExists } from './fileHandler.js';
 
 /**
  * A single leaf-level difference between the old and new file contents.
@@ -23,6 +23,8 @@ export interface CommitResult {
   changed: boolean;
   dryRun: boolean;
   diff: JsonDiff;
+  /** True when this commit deletes the file rather than writing it. */
+  deleted?: boolean;
 }
 
 /**
@@ -126,6 +128,36 @@ export async function commitChange(filePath: string, newData: unknown): Promise<
 
   if (!dryRun && result.changed) {
     await writeJsonFile(filePath, newData);
+  }
+
+  context?.commits.push(result);
+  return result;
+}
+
+/**
+ * The deletion arm of the write choke point. Mirrors `commitChange` so that
+ * file removals participate in the same dry-run/preview machinery: in dry-run
+ * the deletion is recorded but not performed, otherwise the file is unlinked
+ * (only if it currently exists — a missing file is reported as `changed: false`
+ * and left alone). `changed` reflects whether the file existed to begin with,
+ * so a preview reads "this file would be deleted" rather than dumping the file's
+ * entire contents through `diffJson`.
+ */
+export async function commitDelete(filePath: string): Promise<CommitResult> {
+  const context = commitStore.getStore();
+  const dryRun = context?.dryRun ?? false;
+
+  const existed = await fileExists(filePath);
+  const result: CommitResult = {
+    path: filePath,
+    changed: existed,
+    dryRun,
+    diff: { changes: [], truncated: false },
+    deleted: true,
+  };
+
+  if (!dryRun && existed) {
+    await deleteFile(filePath);
   }
 
   context?.commits.push(result);

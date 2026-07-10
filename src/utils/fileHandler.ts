@@ -1,4 +1,4 @@
-import { readFile, writeFile, readdir, access } from 'fs/promises';
+import { readFile, writeFile, readdir, access, unlink } from 'fs/promises';
 import { join, extname } from 'path';
 
 /**
@@ -52,6 +52,19 @@ export async function fileExists(filePath: string): Promise<boolean> {
     return true;
   } catch {
     return false;
+  }
+}
+
+/**
+ * Delete a file. A missing file is treated as a no-op (the desired end state —
+ * the file being gone — already holds), so deletions stay idempotent.
+ */
+export async function deleteFile(filePath: string): Promise<void> {
+  try {
+    await unlink(filePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw new Error(`Failed to delete file ${filePath}: ${error}`);
   }
 }
 
