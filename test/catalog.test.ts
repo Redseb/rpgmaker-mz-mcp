@@ -81,6 +81,86 @@ describe('findTiles', () => {
   });
 });
 
+describe('default tilesets (Outside / Inside / Dungeon / SF)', () => {
+  // Real default tileset slot layouts from the new-project Tilesets.json.
+  const OUTSIDE = [
+    'Outside_A1',
+    'Outside_A2',
+    'Outside_A3',
+    'Outside_A4',
+    'Outside_A5',
+    'Outside_B',
+    'Outside_C',
+    '',
+    '',
+  ];
+  const INSIDE = [
+    'Inside_A1',
+    'Inside_A2',
+    '',
+    'Inside_A4',
+    'Inside_A5',
+    'Inside_B',
+    'Inside_C',
+    '',
+    '',
+  ];
+  const DUNGEON = [
+    'Dungeon_A1',
+    'Dungeon_A2',
+    '',
+    'Dungeon_A4',
+    'Dungeon_A5',
+    'Dungeon_B',
+    'Dungeon_C',
+    '',
+    '',
+  ];
+  // SF Outside reuses Outside_A1/A2 for the first two autotile slots.
+  const SF_OUTSIDE = [
+    'Outside_A1',
+    'Outside_A2',
+    'SF_Outside_A3',
+    'SF_Outside_A4',
+    'SF_Outside_A5',
+    'SF_Outside_B',
+    'SF_Outside_C',
+    '',
+    '',
+  ];
+
+  it('catalogs Outside across all seven sheets', () => {
+    expect(hasCatalog(OUTSIDE)).toBe(true);
+    const entries = catalogForTileset(OUTSIDE);
+    // A2 first kind ("Meadow") resolves to the A2 slot base id.
+    const meadow = entries.find((e) => e.name === 'Meadow')!;
+    expect(meadow).toMatchObject({ sheet: 'Outside_A2', role: 'A2', autotile: true, kind: 16 });
+    expect(meadow.tileId).toBe(TILE_ID.A2);
+    // A3 is a wall/roof sheet (slot 2) — present only for Outside/SF, not Inside/Dungeon.
+    expect(entries.some((e) => e.sheet === 'Outside_A3')).toBe(true);
+    expect(entries.filter((e) => e.role === 'A4').length).toBe(48);
+  });
+
+  it('catalogs Inside and Dungeon (no A3 slot)', () => {
+    expect(findTiles(INSIDE, 'wood floor').length).toBeGreaterThanOrEqual(1);
+    expect(catalogForTileset(INSIDE).some((e) => e.role === 'A3')).toBe(false);
+
+    const dungeonWater = findTiles(DUNGEON, 'water a').find((e) => e.sheet === 'Dungeon_A1')!;
+    expect(dungeonWater).toMatchObject({ role: 'A1', kind: 0, autotile: true });
+    expect(dungeonWater.tileId).toBe(TILE_ID.A1);
+  });
+
+  it('catalogs SF sheets, including ones reused across SF tilesets', () => {
+    const entries = catalogForTileset(SF_OUTSIDE);
+    // SF_Outside_A3 sits in slot 2 (A3) → wall autotile kinds start at 48.
+    const roof = entries.find((e) => e.sheet === 'SF_Outside_A3')!;
+    expect(roof).toMatchObject({ role: 'A3', autotile: true });
+    expect(getAutotileKind(roof.tileId)).toBe(48);
+    // The concrete wall on SF_Outside_A4 is findable by meaning.
+    expect(findTiles(SF_OUTSIDE, 'concrete').some((e) => e.sheet === 'SF_Outside_A4')).toBe(true);
+  });
+});
+
 describe('project-catalog overlay (Phase 4)', () => {
   // A tileset using one custom autotile sheet the built-in catalog doesn't cover.
   const CUSTOM = ['', 'Custom_A2', '', '', '', '', '', '', ''];

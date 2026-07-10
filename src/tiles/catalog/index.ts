@@ -12,12 +12,25 @@
  */
 import { TILE_ID, makeAutotileId } from '../tileCodec.js';
 import { OVERWORLD_TILE_NAMES } from './overworld.js';
+import { OUTSIDE_TILE_NAMES } from './outside.js';
+import { INSIDE_TILE_NAMES } from './inside.js';
+import { DUNGEON_TILE_NAMES } from './dungeon.js';
+import { SF_TILE_NAMES } from './sf.js';
 
 /**
  * The catalog registry: sheet filename → the sheet's tile names (indexed by
- * local index within the sheet). Extended per tileset as catalogs are authored.
+ * local index within the sheet). Covers the default RPG Maker MZ tilesets
+ * (Overworld, Outside, Inside, Dungeon, SF); extended per tileset as catalogs
+ * are authored. Keyed by sheet filename, so a sheet shared across tilesets is
+ * cataloged once.
  */
-const CATALOG: Record<string, string[]> = { ...OVERWORLD_TILE_NAMES };
+const CATALOG: Record<string, string[]> = {
+  ...OVERWORLD_TILE_NAMES,
+  ...OUTSIDE_TILE_NAMES,
+  ...INSIDE_TILE_NAMES,
+  ...DUNGEON_TILE_NAMES,
+  ...SF_TILE_NAMES,
+};
 
 /** The 9 `tilesetNames` slots, positional. Slots 0–3 are autotiles, 4–8 flat. */
 const SLOT_ROLES = ['A1', 'A2', 'A3', 'A4', 'A5', 'B', 'C', 'D', 'E'] as const;
