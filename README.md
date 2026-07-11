@@ -1,20 +1,22 @@
 # RPG Maker MZ MCP Server
 
-A Model Context Protocol (MCP) server for RPG Maker MZ. It lets an AI assistant read and write an RPG Maker MZ project's database and map data directly — actors, items, skills, map events, and system settings — instead of hand-editing everything in the editor.
+A Model Context Protocol (MCP) server for RPG Maker MZ. It lets an AI assistant read and write an RPG Maker MZ project's database and map data directly — actors, classes, skills, items, equipment, states, enemies, troops, common events, maps, tiles, tilesets, events, and system settings — instead of hand-editing everything in the editor.
 
-> **Fork notice.** This is a fork of [k4zuki0539/-rpgmaker-mz-mcp](https://github.com/k4zuki0539/-rpgmaker-mz-mcp) (MIT). It builds on that project's CRUD scaffolding toward richer level-design capabilities. See [Roadmap](#roadmap) for what's planned.
+The server exposes **112 tools** over stdio. It covers the full stock RPG Maker MZ authoring surface: database CRUD, multi-map management and the map tree, autotile-aware **tile painting**, passability/terrain editing, a library of **event-command builders** (dialogue, flow, game state, transitions, scenes) that emit editor-faithful command sequences, higher-level NPC/event ergonomics, and a project-wide reference linter.
 
-## Features
+> **Fork notice.** This is a fork of [k4zuki0539/-rpgmaker-mz-mcp](https://github.com/k4zuki0539/-rpgmaker-mz-mcp) (MIT), extended well beyond the original CRUD scaffolding into full vanilla level-design and game-logic authoring. See [Capabilities](#capabilities) for the full picture.
 
-- **Actor Management**: Create, read, update, and search actors
-- **Item/Equipment Management**: Manage items, weapons, armors, and skills
-- **Skill Creation**: Create custom skills from natural language
-  - Damage skills, healing skills, buffs, debuffs, status effects
-  - Simplified helpers for common skill types, plus a full-control tool
-- **Map Management**: Read map data, edit map properties, set individual tiles
-- **Event Management**: Create, update, delete, and script map events
-- **System Configuration**: Update game settings, variables, and switches
-- **Type Safety**: TypeScript throughout, with typed RPG Maker MZ data structures
+## Capabilities
+
+- **Database CRUD** — actors, classes (with learnings & param curves), skills (full-control + simplified damage/heal/buff/state helpers), items, weapons, armors, states, enemies, and troops. Only a `name` is required to create; everything else falls back to the editor's true "New X" template.
+- **Maps & the map tree** — create/delete maps, batch-reparent/reorder/rename with a cycle guard, and edit map properties. New maps register in `MapInfos.json` exactly as the editor expects.
+- **Tile painting (with automatic autotiling)** — `paint_tiles`/`fill_area` set tiles on any of the six map layers and recompute autotile shapes (and their neighbours') from same-kind adjacency, so a filled region borders itself correctly. `place_object` stamps multi-tile B/C objects (houses, trees) and reports their passability footprint.
+- **Semantic tile catalog** — `find_tile "grass"` → a paintable tile id. Built-in catalogs for every default tileset (Overworld, Outside, Inside, Dungeon, SF), sourced from RPG Maker's own English name sidecars. A bundled vision-bootstrap skill catalogs **custom** tilesets.
+- **Passability & terrain** — read a tile's flags or a map cell's layered passability (`get_tile_flags`/`check_passability`), and **edit** passability/terrain-tag/behaviour flags (`set_tile_flags`).
+- **Event-command builders** — high-level, read-only builders that emit the exact `EventCommand` sequences the editor writes (including tricky recursive branch blocks and continuation rows), landed on a page via `insert_event_commands`. Covers dialogue & flow, game-state changes, presentation/transitions, and scene processing.
+- **Event & NPC ergonomics** — `create_npc` places a complete talking NPC in one call; `set_event_page` merges a page's graphic + behavior in place.
+- **Asset awareness** — `list_assets` enumerates valid character/face/tileset/audio names so events never reference a missing file.
+- **Correctness layer** — Zod-validated inputs, warn-by-default event validation, a cross-file reference linter (`validate_references`), and a dry-run/diff preview on every write.
 
 ## Installation
 
@@ -28,126 +30,168 @@ npm run build
 Set the RPG Maker MZ project path as an environment variable:
 
 ```bash
-# Windows
-set RPGMAKER_PROJECT_PATH=C:\path\to\your\rpgmaker\project
-
 # macOS/Linux
 export RPGMAKER_PROJECT_PATH=/path/to/your/rpgmaker/project
+
+# Windows
+set RPGMAKER_PROJECT_PATH=C:\path\to\your\rpgmaker\project
 ```
+
+The path must point to a directory containing `game.rmmzproject` and a `data/` directory with `System.json`.
 
 ## Usage
 
-### Running the Server
+### Running the server
 
 ```bash
-npm start
-```
-
-Or directly:
-
-```bash
-node dist/index.js
+npm start          # or: node dist/index.js
 ```
 
 ### Configuring in Claude Desktop
 
-Add to your Claude Desktop configuration file:
-
-**Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
-
-**macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+Add to your Claude Desktop configuration file (`%APPDATA%\Claude\claude_desktop_config.json` on Windows, `~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
 
 ```json
 {
   "mcpServers": {
     "rpgmaker-mz": {
       "command": "node",
-      "args": ["C:/path/to/rpgmaker-mz-mcp/dist/index.js"],
+      "args": ["/path/to/rpgmaker-mz-mcp/dist/index.js"],
       "env": {
-        "RPGMAKER_PROJECT_PATH": "C:/path/to/your/rpgmaker/project"
+        "RPGMAKER_PROJECT_PATH": "/path/to/your/rpgmaker/project"
       }
     }
   }
 }
 ```
 
-## Available Tools
+## Available tools
 
-### Actor Tools
+All 112 tools, grouped by area. Tools that write to the project accept an optional `dryRun` argument (see [Dry-run preview](#dry-run-preview)).
 
-- `get_actors` - Get all actors from the project
-- `get_actor` - Get a specific actor by ID
-- `update_actor` - Update an actor's properties
-- `create_actor` - Create a new actor
-- `search_actors` - Search actors by name or nickname
+### Actors
 
-### Item Tools
+- `get_actors`, `get_actor`, `create_actor`, `update_actor`, `search_actors`
 
-- `get_items` - Get all items from the project
-- `get_weapons` - Get all weapons from the project
-- `get_armors` - Get all armors from the project
-- `get_skills` - Get all skills from the project
-- `update_item` - Update an item's properties
-- `search_items` - Search items by name or description
+### Classes
 
-### Skill Tools
+- `get_classes`, `create_class`, `update_class`
+- `add_class_learning` — attach a skill learned at a level (validates the skill, keeps learnings level-sorted)
+- `set_class_param_curve` — replace one of the 8 parameter growth rows
 
-- `get_skill` - Get a specific skill by ID
-- `create_skill` - Create a custom skill with full control
-- `create_damage_skill` - Create a damage-dealing skill (simplified)
-- `create_healing_skill` - Create a healing skill (simplified)
-- `create_buff_skill` - Create a buff skill (simplified)
-- `create_state_skill` - Create a state-inflicting skill (simplified)
-- `update_skill` - Update a skill's properties
-- `search_skills` - Search skills by name or description
+### Skills
 
-### Map Tools
+- `get_skills`, `get_skill`, `create_skill` (full control), `update_skill`, `search_skills`
+- `create_damage_skill`, `create_healing_skill`, `create_buff_skill`, `create_state_skill` — natural-language-friendly helpers for common skill types
 
-- `get_map` - Get map data by ID
-- `get_map_infos` - Get information about all maps
-- `get_map_events` - Get all events from a specific map
-- `get_map_event` - Get a specific event from a map
-- `update_map_event` - Update a map event's properties
-- `create_map_event` - Create a new event on a map
-- `search_map_events` - Search events on a map by name
-- `add_event_command` - Add a command to an event page
-- `update_map` - Update a map's top-level properties
-- `get_map_dimensions` - Get a map's width and height in tiles
-- `set_map_tile` - Set a single raw tile ID at (x, y) on a z-layer
-- `delete_map_event` - Delete an event from a map by ID
+### Items & equipment
 
-### System Tools
+- `get_items`, `create_item`, `update_item`, `search_items`
+- `get_weapons`, `create_weapon`, `update_weapon`
+- `get_armors`, `create_armor`, `update_armor`
 
-- `get_system` - Get system data
-- `get_variables` - Get all game variable names
-- `set_variable_name` - Set a variable name
-- `get_switches` - Get all game switch names
-- `set_switch_name` - Set a switch name
-- `get_game_title` - Get the game title
-- `update_game_title` - Update the game title
-- `update_starting_position` - Update the game starting position
+### States
 
-### Index Tools
+- `get_states`, `create_state`, `update_state`
 
-- `list_names` - Cheap names-only `{ id, name }` index for a table (actors, items, weapons, armors, skills, or maps) — for looking up IDs without a full record dump
+### Enemies & troops
 
-### Validation Tools
+- `get_enemies`, `create_enemy`, `update_enemy`
+- `get_troops`, `create_troop`, `update_troop` — `create_troop` validates that every member references an existing enemy
 
-- `validate_event` - Validate a single event's command lists against the known RPG Maker MZ command table (read-only)
-- `validate_project` - Validate the event command lists of every map in the project, returning aggregated, map-tagged warnings (read-only)
+### Common events
+
+- `get_common_events`, `create_common_event`, `update_common_event`
+- `call_common_event` — builds the code-117 call command and validates the target exists
+
+### Maps & the map tree
+
+- `get_map`, `get_map_infos`, `get_map_dimensions`, `update_map`
+- `create_map` — allocates the next id, writes a blank map, and registers it in the tree
+- `delete_map` — removes a map and reparents its children onto its parent
+- `update_map_tree` — batch reparent/reorder/rename/expand with an up-front existence check and cycle guard
+
+### Map events
+
+- `get_map_events`, `get_map_event`, `search_map_events`
+- `create_map_event`, `update_map_event`, `delete_map_event`
+- `add_event_command` — append a single command to an event page
+- `set_map_tile` — set a single raw tile id at (x, y) on a z-layer (no autotiling)
+
+### Event & NPC ergonomics
+
+- `create_npc` — one-shot "talking NPC": graphic + trigger + a talk list from `text` or explicit `commands`
+- `set_event_page` — merge a page's graphic + behavior (sprite, trigger, priority, movement, flags) in place
+
+### Event-command builders
+
+Read-only builders that return editor-faithful `EventCommand` sequences; land them on a page with `insert_event_commands`.
+
+- **Dialogue & flow:** `build_show_text` (101/401), `build_show_choices` (102/402–404), `build_conditional_branch` (111/411/412), `build_flow_command` (wait/exit/label/jump)
+- **Game state:** `build_control_switch` (121/123), `build_control_variable` (122), `build_change_gold` (125), `build_change_items` (126–128), `build_change_party_member` (129)
+- **Presentation & transitions:** `build_transfer_player` (201), `build_play_audio` (BGM/BGS/ME/SE), `build_screen_effect` (fade/tint/flash/shake), `build_picture` (show/erase), `build_character_effect` (animation/balloon)
+- **Scenes:** `build_battle_processing` (301), `build_shop_processing` (302/605), `build_name_input` (303), `build_change_actor` (HP/MP/state/recover/EXP/level, 311–316)
+- **Insertion:** `insert_event_commands` — splice a built sequence onto a page, then validate
+
+### Move routes
+
+- `create_move_route` — build a `MoveRoute` from a named pattern (patrol/approach/flee/wander/custom)
+- `set_movement_route` — insert a forced Set Movement Route (code 205 + 505 continuation rows)
+
+### Plugin commands
+
+- `list_plugin_commands` — view the plugin-command allowlist
+- `create_plugin_command` — build a code-357 plugin command with normalized args
+
+### Tiles, catalog & painting
+
+- `describe_tile` — decode a raw tile id (sheet, autotile kind/shape, geometry)
+- `get_tile_catalog`, `find_tile` — resolve human names ↔ paintable tile ids
+- `paint_tiles`, `fill_area` — paint with automatic autotiling
+- `place_object` — stamp a multi-tile B/C object and report its passability footprint
+
+### Tileset flags (passability / terrain)
+
+- `get_tile_flags` — decode a tile's passability/star/ladder/bush/counter/damage/terrain-tag
+- `check_passability` — the map-aware, layered answer for a cell
+- `set_tile_flags` — **edit** a tile's flags (non-destructive merge; auto-applies to all 48 shape slots of an autotile kind)
+
+### Assets
+
+- `list_assets` — enumerate available asset basenames (characters, faces, tilesets, pictures, audio, …)
+
+### System & vocabulary
+
+- `get_system`, `get_game_title`, `update_game_title`
+- `get_variables`, `set_variable_name`, `get_switches`, `set_switch_name`
+- `get_starting_position`, `update_starting_position`
+- `get_party`, `set_party` — the starting party (`set_party` validates every actor id)
+- `get_terms`, `set_term` — menu vocabulary
+- `get_types`, `set_type_name` — element/skill/weapon/armor/equip type-name lists
+- `set_currency_unit`
+
+### Index & validation
+
+- `list_names` — cheap `{ id, name }` index for a table (actors, items, skills, maps, enemies, …)
+- `validate_event`, `validate_project` — event-command-shape validation (read-only)
+- `validate_references` — cross-file id-integrity audit (party→actor, transfer→map, effect→state/skill/common-event, drops→item, map-tree cycles, …)
 
 ## Input validation
 
-Every tool declares its arguments as a [Zod](https://zod.dev) schema. The server (built on the MCP SDK's high-level `McpServer`) validates incoming arguments against that schema **before** a tool handler runs, so malformed calls are rejected with a clear error instead of writing garbage to disk. For example, calling `get_actor` with a non-numeric `actorId` returns an `Input validation error` naming the offending field.
+Every tool declares its arguments as a [Zod](https://zod.dev) schema. The server (built on the MCP SDK's high-level `McpServer`) validates incoming arguments against that schema **before** a handler runs, so malformed calls are rejected with a clear `Input validation error` naming the offending field instead of writing garbage to disk.
 
 ## Event validation (warn-by-default)
 
 Event command lists are checked against a table of known RPG Maker MZ command codes (`101` Show Text, `201` Transfer Player, `122` Control Variables, …). Validation is **advisory** — it never blocks a write:
 
-- The `validate_event` and `validate_project` tools report problems without changing anything.
-- The event-writing tools (`create_map_event`, `update_map_event`, `add_event_command`) echo any warnings for the resulting event alongside their normal response.
+- `validate_event` / `validate_project` report problems without changing anything.
+- The event-writing tools echo any warnings for the resulting event alongside their normal response.
 
-Warnings flag things like a wrong parameter count for a known command, a command list not terminated by the code-`0` end marker, or an unrecognized command code (which may simply be a plugin command — hence a warning, not an error).
+Warnings flag things like a wrong parameter count for a known command, a list not terminated by the code-`0` end marker, or an unrecognized command code (which may simply be a plugin command — hence a warning, not an error).
+
+## Reference linting
+
+`validate_references` performs a **cross-file id-integrity audit** — orthogonal to the command-shape check above. It walks the whole database and flags references that point at something that doesn't exist: a starting party member with no matching actor, a Transfer Player targeting a missing map, a skill effect that adds a non-existent state, an enemy dropping an unknown item, a cyclic map-tree parent, and more. Every check is warn-by-default and guarded against false positives on partially-loaded projects.
 
 ## Dry-run preview
 
@@ -169,132 +213,22 @@ Every tool that writes to the project accepts an optional `dryRun` argument. Whe
 }
 ```
 
-This is useful for previewing destructive edits (e.g. `update_map_event`, which replaces whole event pages) before committing them. All writes go through a single choke point that also skips no-op writes and keeps the on-disk JSON in the editor's compact format.
+All writes go through a single choke point that skips no-op writes and keeps the on-disk JSON in the editor's compact single-line format. File deletions (e.g. `delete_map`) share the same dry-run machinery.
 
-## Example Usage
+## Custom-tileset catalog skill
 
-Once configured, you can use Claude to interact with your RPG Maker MZ project:
+The default tilesets are cataloged out of the box. For a **custom** (non-RTP) tileset, a bundled Claude skill under `.claude/skills/tileset-catalog/` slices each sheet into labelled samples, has Claude vision-name them, and writes a versioned, project-scoped catalog to `data/tilecatalog/` — after which `find_tile`/`get_tile_catalog` resolve names for that sheet too. The skill ships a dependency-free PNG codec and engine-exact tile geometry, so it runs anywhere Node does.
 
-### Example 1: Get All Actors
+## Example prompts
 
-```
-Show me all actors in my RPG Maker MZ project
-```
+Once configured, drive your project in natural language:
 
-Claude will use the `get_actors` tool to retrieve and display all actors.
-
-### Example 2: Update an Actor
-
-```
-Update actor 1's name to "Hero" and initial level to 5
-```
-
-Claude will use the `update_actor` tool with the appropriate parameters.
-
-### Example 3: Create a New Item
-
-```
-Create a new item called "Health Potion" that restores 50 HP
-```
-
-Claude will help you create the item with the proper structure.
-
-### Example 4: Search Map Events
-
-```
-Find all events on map 1 that contain "treasure" in their name
-```
-
-Claude will use the `search_map_events` tool to find matching events.
-
-### Example 5: Update Game Settings
-
-```
-Change the game title to "My Epic Adventure"
-```
-
-Claude will use the `update_game_title` tool to update the system data.
-
-### Example 6: Create a Custom Skill
-
-```
-Create a fire magic skill called "Fireball" that costs 15 MP,
-targets a single enemy, and deals "a.mat * 4 - b.mdf * 2" damage
-```
-
-Claude will use the `create_damage_skill` tool to create the skill.
-
-### Example 7: Create a Healing Skill
-
-```
-Create a group healing spell called "Mass Heal" that costs 30 MP,
-targets all allies, and heals "a.mat * 3 + 100" HP
-```
-
-Claude will use the `create_healing_skill` tool to create the healing skill.
-
-## Data Structure Reference
-
-### Actor Structure
-
-```typescript
-{
-  id: number;
-  name: string;
-  nickname: string;
-  profile: string;
-  classId: number;
-  initialLevel: number;
-  maxLevel: number;
-  characterName: string;
-  characterIndex: number;
-  faceName: string;
-  faceIndex: number;
-  battlerName: string;
-  traits: Trait[];
-  equips: number[];
-  note: string;
-}
-```
-
-### Map Event Structure
-
-```typescript
-{
-  id: number;
-  name: string;
-  note: string;
-  pages: EventPage[];
-  x: number;
-  y: number;
-}
-```
-
-### Event Command Structure
-
-```typescript
-{
-  code: number;        // Command code (see RPG Maker MZ documentation)
-  indent: number;      // Indentation level
-  parameters: any[];   // Command parameters
-}
-```
-
-## Common Event Command Codes
-
-- `101` - Show Text
-- `102` - Show Choices
-- `111` - Conditional Branch
-- `112` - Loop
-- `113` - Break Loop
-- `121` - Control Switches
-- `122` - Control Variables
-- `125` - Change Gold
-- `126` - Change Items
-- `201` - Transfer Player
-- `356` - Plugin Command
-
-For a complete list, refer to the RPG Maker MZ documentation.
+- "Create a fire skill 'Fireball' costing 15 MP that deals `a.mat * 4 - b.mdf * 2` to one enemy."
+- "Add a new town map under the world map, 30×25, using the Outside tileset."
+- "Paint grass in a 10×8 rectangle at (4, 4) on map 3 and let it auto-border."
+- "Place a talking NPC named 'Guard' at (8, 5) on map 2 who says 'Halt! Who goes there?'"
+- "Make the water tiles on tileset 1 impassable and tag them terrain 1."
+- "Check my project for broken references before I ship."
 
 ## Development
 
@@ -305,89 +239,46 @@ npm run lint          # ESLint
 npm run lint:fix      # ESLint with autofix
 npm run format        # Format with Prettier
 npm run format:check  # Check formatting (used in CI)
+npm test              # Vitest (304 tests)
 ```
 
-CI runs lint, format check, and build on every push and pull request (see `.github/workflows/ci.yml`).
+CI runs lint, format check, tests, and build on every push and pull request (see `.github/workflows/ci.yml`).
 
-## Project Structure
+## Project structure
 
 ```
 rpgmaker-mz-mcp/
 ├── src/
 │   ├── index.ts              # McpServer bootstrap: registers every tool, dispatch + dry-run
 │   ├── registry.ts           # ToolDefinition shape + shared dryRun schema
-│   ├── tools/
-│   │   ├── allTools.ts       # Assembles every tool module's definitions
-│   │   ├── actorTools.ts     # Actor management
-│   │   ├── itemTools.ts      # Item/weapon/armor management
-│   │   ├── skillTools.ts     # Skill creation helpers
-│   │   ├── mapTools.ts       # Map and event management
-│   │   ├── systemTools.ts    # System settings, switches, variables
-│   │   ├── listTools.ts      # Names-only index tool
-│   │   └── validationTools.ts # validate_event / validate_project
-│   ├── validation/
-│   │   └── eventCommands.ts  # Known-command table + event validators
-│   └── utils/
-│       ├── fileHandler.ts    # JSON I/O + project path helpers
-│       ├── commit.ts         # Single write choke point: diff, dry-run, no-op skipping
-│       └── types.ts          # RPG Maker MZ data type definitions
+│   ├── tools/                # One module per area (actors, items, skills, maps, battle,
+│   │                         #   classes, states, common events, moves, plugins, tiles,
+│   │                         #   catalog, paint, objects, tilesets, system, assets,
+│   │                         #   event-command builders, event pages, list, validation)
+│   ├── events/               # Pure event-command builders (no I/O)
+│   ├── tiles/                # Tile subsystem: codec, autotile solver, paint core,
+│   │                         #   flag codec, and the semantic catalog
+│   ├── validation/           # Known-command tables + event/move/plugin/reference validators
+│   └── utils/                # File I/O, the commit choke point, and RPG Maker MZ types
 ├── test/                     # Vitest suite
+├── .claude/skills/
+│   └── tileset-catalog/      # Vision catalog-bootstrap skill for custom tilesets
 ├── dist/                     # Compiled JavaScript (gitignored)
-├── eslint.config.js
-├── .prettierrc.json
-├── package.json
-├── tsconfig.json
 └── README.md
 ```
 
-## Roadmap
+## Safety and best practices
 
-This fork is being extended beyond the original CRUD tools toward full level-design support. Planned, roughly in dependency order:
-
-- **Correctness:** ✅ schema-validated inputs (Zod), ✅ warn-by-default event validation + `validate_event`/`validate_project`, ✅ names-only index tools, ✅ dry-run/diff previews. Still planned: automatic pre-write backups.
-- **Missing subsystems:** multi-map support (`create_map` + map tree), class editor, enemy/troop tools, common events, move-route builder, plugin-command support.
-- **Tile painting (headline feature):** a semantic tile catalog, a deterministic autotile shape calculator, layer-aware paint commands across the six map layers, and passability/terrain-tag exposure.
-
-## Safety and Best Practices
-
-1. **Backup Your Project**: Always backup your RPG Maker MZ project before making changes
-2. **Close RPG Maker MZ Editor**: Close the RPG Maker MZ editor when using this server to avoid conflicts
-3. **Validate Changes**: Test your game after making changes to ensure everything works correctly
-4. **Version Control**: Use git or another version control system for your project
+1. **Close the RPG Maker MZ editor** while using this server — it writes JSON files directly, and the editor can overwrite changes on save.
+2. **Use version control** for your project. Combined with dry-run previews and validation, git is the safety net (the server does not make automatic backups).
+3. **Preview destructive edits** with `dryRun: true` before committing them.
+4. **Test in-engine** after significant changes.
 
 ## Limitations
 
-- This server modifies JSON files directly. Make sure the RPG Maker MZ editor is closed when using it
-- Some advanced features may require manual editing in the RPG Maker MZ editor
-- Plugin-specific data structures may not be fully supported
-
-## Troubleshooting
-
-### "Invalid RPG Maker MZ project path"
-
-Make sure the `RPGMAKER_PROJECT_PATH` environment variable points to a valid RPG Maker MZ project directory containing:
-
-- `game.rmmzproject` file
-- `data/` directory with `System.json`
-
-### Changes Not Appearing
-
-1. Make sure the RPG Maker MZ editor is closed
-2. Verify the project path is correct
-3. Check that the JSON files have write permissions
-
-### Tool Not Found
-
-Restart Claude Desktop after updating the configuration file.
-
-## Contributing
-
-Contributions are welcome! Please ensure:
-
-- Code follows TypeScript best practices
-- All functions include proper error handling
-- Type definitions are updated for new features
-- Documentation is updated accordingly
+- Writes JSON files directly; the editor must be closed to avoid conflicts.
+- Plugin-specific data structures are supported through a narrow, extensible allowlist — arbitrary plugin params pass through unchecked.
+- Animations (`Animations.json`, Effekseer-based) are not edited by this server.
 
 ## License
 
@@ -398,7 +289,3 @@ MIT
 - [RPG Maker MZ Official Website](https://www.rpgmakerweb.com/products/rpg-maker-mz)
 - [Model Context Protocol Documentation](https://modelcontextprotocol.io/)
 - [RPG Maker MZ Database Structure](https://github.com/rpgtkoolmv/rmmz-api-reference)
-
-## Support
-
-For issues and feature requests, please open an issue on the project repository.
