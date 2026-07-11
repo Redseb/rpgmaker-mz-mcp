@@ -37,7 +37,7 @@ describe('schemaFor', () => {
 
 describe('tool registry contract', () => {
   it('exposes the expected number of tools', () => {
-    expect(allToolDefinitions.length).toBe(108);
+    expect(allToolDefinitions.length).toBe(110);
   });
 
   it('has unique tool names', () => {
