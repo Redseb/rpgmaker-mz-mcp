@@ -194,4 +194,38 @@ describe('project-catalog overlay (Phase 4)', () => {
     expect(entries.map((e) => e.name)).toEqual(['Meadow']);
     expect(entries[0].source).toBe('project');
   });
+
+  it('surfaces object-form overlay metadata (description/confidence/manual)', () => {
+    const rich = {
+      Custom_A2: [
+        {
+          name: 'Emerald Grass',
+          description: 'lush green grass',
+          confidence: 'high',
+          manual: true,
+        },
+        { name: 'Cracked Earth', confidence: 'low' },
+      ],
+    };
+    const entries = catalogForTileset(CUSTOM, undefined, rich);
+    const grass = entries.find((e) => e.name === 'Emerald Grass')!;
+    expect(grass).toMatchObject({
+      description: 'lush green grass',
+      confidence: 'high',
+      manual: true,
+      source: 'project',
+    });
+    // Absent fields aren't padded onto the entry.
+    const earth = entries.find((e) => e.name === 'Cracked Earth')!;
+    expect(earth.confidence).toBe('low');
+    expect(earth.description).toBeUndefined();
+    expect('manual' in earth).toBe(false);
+  });
+
+  it('leaves built-in entries free of project-only metadata', () => {
+    const grass = catalogForTileset(OVERWORLD).find((e) => e.name === 'Grassland A')!;
+    expect(grass.description).toBeUndefined();
+    expect(grass.confidence).toBeUndefined();
+    expect('manual' in grass).toBe(false);
+  });
 });

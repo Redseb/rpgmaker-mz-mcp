@@ -33,8 +33,18 @@ const CUSTOM_A2_CATALOG = {
   autotile: true,
   version: 1,
   entries: {
-    '0': { name: 'Emerald Grass', manual: false },
-    '1': { name: 'Cracked Earth', manual: true },
+    '0': {
+      name: 'Emerald Grass',
+      description: 'bright green grass with flowers',
+      confidence: 'high',
+      manual: false,
+    },
+    '1': {
+      name: 'Cracked Earth',
+      description: 'dry cracked dirt',
+      confidence: 'low',
+      manual: true,
+    },
   },
 };
 
@@ -75,11 +85,25 @@ describe('catalog tools with project-scoped catalogs (integration)', () => {
     const res = (await getCatalog.handler(
       { projectPath: dir },
       { tilesetId: 1, sheet: 'Custom_A2' },
-    )) as { entries: { name: string; tileId: number; source: string }[] };
+    )) as {
+      entries: {
+        name: string;
+        tileId: number;
+        source: string;
+        description?: string;
+        confidence?: string;
+        manual?: boolean;
+      }[];
+    };
     expect(res.entries.map((e) => e.name)).toEqual(['Emerald Grass', 'Cracked Earth']);
     const grass = res.entries.find((e) => e.name === 'Emerald Grass')!;
     expect(grass.tileId).toBe(makeAutotileId(16, 0)); // A2 first kind, shape-0 base
-    expect(grass.source).toBe('project');
+    expect(grass).toMatchObject({
+      source: 'project',
+      description: 'bright green grass with flowers',
+      confidence: 'high',
+      manual: false,
+    });
   });
 
   it('find_tile bridges a custom name to a paintable tile id', async () => {

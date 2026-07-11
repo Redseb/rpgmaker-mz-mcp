@@ -85,15 +85,34 @@ export interface CatalogEntry {
    * (draft — a name a human may still be verifying).
    */
   source: 'builtin' | 'project';
+  /** Free-text tile description — carried through from a `project` catalog only. */
+  description?: string;
+  /** Vision-naming confidence ('high'/'medium'/'low') — `project` catalog only. */
+  confidence?: string;
+  /** True when a human has verified/corrected this `project` catalog entry. */
+  manual?: boolean;
 }
 
 /**
- * A project-scoped name overlay: sheet filename → names by local index. Produced
+ * One tile in a project-scoped overlay. A bare `string` is shorthand for a
+ * name-only tile (`{ name }`); the object form additionally carries the draft
+ * metadata the 3f skill records (description/confidence/manual) so the tools can
+ * surface it.
+ */
+export interface OverlayTile {
+  name: string;
+  description?: string;
+  confidence?: string;
+  manual?: boolean;
+}
+
+/**
+ * A project-scoped name overlay: sheet filename → tiles by local index. Produced
  * by loading the 3f skill's `data/tilecatalog/*.json` files (the loader lives in
  * the tools layer since it does I/O). An overlay entry for a sheet **replaces**
  * the built-in names for that sheet (a project's own labels win for its sheets).
  */
-export type CatalogOverlay = Record<string, string[]>;
+export type CatalogOverlay = Record<string, (string | OverlayTile | undefined)[]>;
 
 /**
  * Every cataloged entry for a tileset, given its `tilesetNames`. Walks each slot,
@@ -106,28 +125,33 @@ export function catalogForTileset(
   sheetFilter?: string,
   overlay?: CatalogOverlay,
 ): CatalogEntry[] {
-  const catalog = overlay ? { ...CATALOG, ...overlay } : CATALOG;
   const entries: CatalogEntry[] = [];
   for (let slot = 0; slot < SLOT_ROLES.length; slot++) {
     const file = tilesetNames[slot];
     if (!file) continue;
     const role = SLOT_ROLES[slot];
     if (sheetFilter && sheetFilter !== file && sheetFilter !== role) continue;
-    const names = catalog[file];
-    if (!names) continue;
-    const source: 'builtin' | 'project' = overlay && overlay[file] ? 'project' : 'builtin';
+    // A project overlay for a sheet replaces the built-in names wholesale.
+    const overlayTiles = overlay?.[file];
+    const tiles: (string | OverlayTile | undefined)[] | undefined = overlayTiles ?? CATALOG[file];
+    if (!tiles) continue;
+    const source: 'builtin' | 'project' = overlayTiles ? 'project' : 'builtin';
     const autotile = isAutotileSlot(role);
-    names.forEach((name, localIndex) => {
-      if (!name || name === 'Transparent') return; // skip the blank/transparent slot
+    tiles.forEach((raw, localIndex) => {
+      const tile = typeof raw === 'string' ? { name: raw } : raw;
+      if (!tile || !tile.name || tile.name === 'Transparent') return; // skip blank/transparent slots
       const tileId = tileIdForSlotIndex(slot, localIndex);
       entries.push({
-        name,
+        name: tile.name,
         sheet: file,
         role,
         tileId,
         autotile,
         ...(autotile ? { kind: AUTOTILE_BASE_KIND[role] + localIndex } : {}),
         source,
+        ...(tile.description ? { description: tile.description } : {}),
+        ...(tile.confidence ? { confidence: tile.confidence } : {}),
+        ...(tile.manual !== undefined ? { manual: tile.manual } : {}),
       });
     });
   }
@@ -151,6 +175,5 @@ export function findTiles(
 
 /** Whether any sheet of a tileset is covered by the catalog (built-in or overlay). */
 export function hasCatalog(tilesetNames: string[], overlay?: CatalogOverlay): boolean {
-  const catalog = overlay ? { ...CATALOG, ...overlay } : CATALOG;
-  return tilesetNames.some((f) => f && catalog[f]);
+  return tilesetNames.some((f) => f && (CATALOG[f] || overlay?.[f]));
 }

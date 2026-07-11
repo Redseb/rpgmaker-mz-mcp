@@ -8,6 +8,7 @@ import {
   findTiles,
   hasCatalog,
   CatalogOverlay,
+  OverlayTile,
 } from '../tiles/catalog/index.js';
 
 /** Load one tileset from the project's data/Tilesets.json (1-indexed, slot 0 null). */
@@ -25,16 +26,21 @@ async function getTileset(projectPath: string, tilesetId: number): Promise<Tiles
 /** The on-disk shape of a project catalog file (written by the 3f bootstrap skill). */
 interface ProjectCatalogFile {
   sheet: string;
-  entries: Record<string, { name: string }>;
+  entries: Record<
+    string,
+    { name: string; description?: string; confidence?: string; manual?: boolean }
+  >;
 }
 
 /**
  * Load project-scoped tile catalogs from `data/tilecatalog/*.json` (written by the
- * 3f vision-bootstrap skill) into a name overlay keyed by sheet filename. Each
- * file's `entries` (local index → { name }) becomes a names-by-index array. A
- * missing directory or an unreadable file yields no overlay for that sheet — the
- * catalog gracefully falls back to built-in names. Returns `undefined` when there
- * are no project catalogs at all (so callers pass nothing to the pure resolver).
+ * 3f vision-bootstrap skill) into an overlay keyed by sheet filename. Each file's
+ * `entries` (local index → { name, description?, confidence?, manual? }) becomes a
+ * tiles-by-index array, carrying through the draft metadata so the tools can
+ * surface it. A missing directory or an unreadable file yields no overlay for that
+ * sheet — the catalog gracefully falls back to built-in names. Returns `undefined`
+ * when there are no project catalogs at all (so callers pass nothing to the pure
+ * resolver).
  */
 async function loadProjectCatalogs(projectPath: string): Promise<CatalogOverlay | undefined> {
   const dir = join(projectPath, 'data', 'tilecatalog');
@@ -50,14 +56,21 @@ async function loadProjectCatalogs(projectPath: string): Promise<CatalogOverlay 
     try {
       const data = await readJsonFile<ProjectCatalogFile>(join(dir, file));
       if (!data.sheet || !data.entries) continue;
-      const names: string[] = [];
+      // Sparse array keyed by local index — forEach in the resolver skips the
+      // holes, so gaps don't need filling and index alignment is preserved.
+      const tiles: (OverlayTile | undefined)[] = [];
       for (const [idx, entry] of Object.entries(data.entries)) {
         const i = Number(idx);
-        if (Number.isInteger(i) && i >= 0 && entry?.name) names[i] = entry.name;
+        if (Number.isInteger(i) && i >= 0 && entry?.name) {
+          tiles[i] = {
+            name: entry.name,
+            ...(entry.description ? { description: entry.description } : {}),
+            ...(entry.confidence ? { confidence: entry.confidence } : {}),
+            ...(entry.manual !== undefined ? { manual: entry.manual } : {}),
+          };
+        }
       }
-      // Fill index gaps with '' so localIndex-based lookup stays aligned.
-      for (let i = 0; i < names.length; i++) if (names[i] === undefined) names[i] = '';
-      overlay[data.sheet] = names;
+      overlay[data.sheet] = tiles;
     } catch {
       // Skip a malformed catalog file rather than failing the whole lookup.
       continue;
@@ -70,7 +83,7 @@ export const catalogToolDefinitions: ToolDefinition[] = [
   {
     name: 'get_tile_catalog',
     description:
-      "Get the semantic tile catalog for a tileset: the named tiles (e.g. 'Grassland A', 'Forest', 'Sea') in each of its image sheets, each with its representative tile id and a `source` ('builtin' = RPG Maker's own labels; 'project' = a draft name from the vision-bootstrap skill). Autotile entries (A1–A4) return the kind's base tile id — feed it to a paint command, which recomputes the shape from neighbours. Covers the default Overworld tileset (World_A1/A2/B/C) plus any custom sheets cataloged into data/tilecatalog/ (via the tileset-catalog skill); still-uncovered sheets are omitted. Optionally restrict to one sheet by filename ('World_A2') or slot role ('A2'). Read-only.",
+      "Get the semantic tile catalog for a tileset: the named tiles (e.g. 'Grassland A', 'Forest', 'Sea') in each of its image sheets, each with its representative tile id and a `source` ('builtin' = RPG Maker's own labels; 'project' = a draft name from the vision-bootstrap skill). Project (custom-sheet) entries also carry the skill's `description`, `confidence` ('high'/'medium'/'low'), and `manual` (true = a human verified it) so you can gauge how trustworthy a draft name is. Autotile entries (A1–A4) return the kind's base tile id — feed it to a paint command, which recomputes the shape from neighbours. Covers the default Overworld tileset (World_A1/A2/B/C) plus any custom sheets cataloged into data/tilecatalog/ (via the tileset-catalog skill); still-uncovered sheets are omitted. Optionally restrict to one sheet by filename ('World_A2') or slot role ('A2'). Read-only.",
     inputSchema: {
       tilesetId: z.number().int().positive().describe('Tileset id (from Tilesets.json / the map)'),
       sheet: z
@@ -94,7 +107,7 @@ export const catalogToolDefinitions: ToolDefinition[] = [
   {
     name: 'find_tile',
     description:
-      "Find tiles in a tileset by name (case-insensitive substring) — the bridge from a meaning like 'grass', 'water', or 'mountain' to a paintable tile id. Returns matching catalog entries (name, sheet, tile id, autotile kind, `source`). Covers the default Overworld tileset plus custom sheets cataloged into data/tilecatalog/ (via the tileset-catalog skill). Read-only.",
+      "Find tiles in a tileset by name (case-insensitive substring) — the bridge from a meaning like 'grass', 'water', or 'mountain' to a paintable tile id. Returns matching catalog entries (name, sheet, tile id, autotile kind, `source`, plus `description`/`confidence`/`manual` for project catalog drafts). Covers the default Overworld tileset plus custom sheets cataloged into data/tilecatalog/ (via the tileset-catalog skill). Read-only.",
     inputSchema: {
       tilesetId: z.number().int().positive().describe('Tileset id (from Tilesets.json / the map)'),
       query: z.string().describe("Name substring to search for, e.g. 'grass' or 'forest'"),
