@@ -20,6 +20,16 @@ import {
   changeWeapons,
   changeArmors,
   changePartyMember,
+  transferPlayer,
+  playAudio,
+  fadeScreen,
+  tintScreen,
+  flashScreen,
+  shakeScreen,
+  showPicture,
+  erasePicture,
+  showAnimation,
+  showBalloon,
   BranchCondition,
   ShowTextOptions,
   ShowChoicesOptions,
@@ -28,7 +38,17 @@ import {
   VariableOperand,
   GainOperation,
   GainOperand,
+  TransferPlayerOptions,
+  TransferDirection,
+  TransferFade,
+  AudioKind,
+  AudioTrack,
+  ColorTone,
+  ShowPictureOptions,
+  PictureOrigin,
+  BlendMode,
 } from '../events/commandBuilders.js';
+import { listAssets, AssetType } from './assetTools.js';
 
 /** Zod shape for a raw event command (used where callers pass builder output back). */
 const eventCommandShape = z.object({
@@ -222,6 +242,36 @@ function toVariableOperand(o: Record<string, unknown>): VariableOperand {
     default:
       return { type: 'constant', value: (o.value as number) ?? 0 };
   }
+}
+
+/** Coerce a loosely-typed color/tone input into the 4-number tuple (defaults to 0s). */
+function toColorTone(raw: unknown): ColorTone {
+  const a = Array.isArray(raw) ? raw : [];
+  return [Number(a[0]) || 0, Number(a[1]) || 0, Number(a[2]) || 0, Number(a[3]) || 0];
+}
+
+/**
+ * Warn (never throw) when an audio `name` isn't among the project's assets for that
+ * channel. Skips the check when the asset dir is empty/missing (nothing to validate
+ * against — e.g. a fixture project), so it can't emit false positives.
+ */
+async function audioNameWarnings(
+  projectPath: string,
+  kind: AudioKind,
+  name: string,
+): Promise<ValidationWarning[]> {
+  if (!projectPath) return [];
+  const { names } = await listAssets(projectPath, kind as AssetType);
+  if (names.length > 0 && !names.includes(name)) {
+    return [
+      {
+        path: `play_audio ${kind}`,
+        code: undefined,
+        message: `audio "${name}" is not a known ${kind} asset (a wrong filename fails silently at runtime)`,
+      },
+    ];
+  }
+  return [];
 }
 
 export const eventCommandToolDefinitions: ToolDefinition[] = [
@@ -489,6 +539,194 @@ export const eventCommandToolDefinitions: ToolDefinition[] = [
           args.initialize ?? false,
           args.indent ?? 0,
         ),
+      };
+    },
+  },
+  {
+    name: 'build_transfer_player',
+    description:
+      'Build a Transfer Player (201) event command for insertion via insert_event_commands — move the party to (x, y) on a map. With designation "variable", mapId/x/y are variable ids resolved at runtime. Read-only: returns { command }.',
+    inputSchema: {
+      mapId: z
+        .number()
+        .int()
+        .describe('Destination map id (or a variable id if designation=variable)'),
+      x: z.number().int().describe('Destination tile x (or a variable id)'),
+      y: z.number().int().describe('Destination tile y (or a variable id)'),
+      direction: z
+        .enum(['retain', 'down', 'left', 'right', 'up'])
+        .optional()
+        .describe('Facing after transfer (default retain)'),
+      fade: z.enum(['black', 'white', 'none']).optional().describe('Fade style (default black)'),
+      designation: z
+        .enum(['direct', 'variable'])
+        .optional()
+        .describe(
+          'direct: mapId/x/y are literal; variable: they are variable ids (default direct)',
+        ),
+      indent: z.number().int().optional().describe('Indentation level (default 0)'),
+    },
+    handler: async (_ctx, args) => {
+      const options: TransferPlayerOptions = {
+        direction: args.direction as TransferDirection | undefined,
+        fade: args.fade as TransferFade | undefined,
+        designation: args.designation as 'direct' | 'variable' | undefined,
+        indent: args.indent,
+      };
+      return {
+        command: transferPlayer(args.mapId as number, args.x as number, args.y as number, options),
+      };
+    },
+  },
+  {
+    name: 'build_play_audio',
+    description:
+      'Build a Play BGM/BGS/ME/SE (241/245/249/250) event command for insertion via insert_event_commands. Warns (never blocks) when `name` is not a known audio asset for that channel (checked against list_assets). Returns { command, warnings? }.',
+    inputSchema: {
+      kind: z.enum(['bgm', 'bgs', 'me', 'se']).describe('Which audio channel to play on'),
+      name: z.string().describe('Audio basename (from list_assets, extension stripped)'),
+      volume: z.number().optional().describe('Volume 0–100 (default 90)'),
+      pitch: z.number().optional().describe('Pitch 50–150 (default 100)'),
+      pan: z.number().optional().describe('Pan -100–100 (default 0)'),
+      indent: z.number().int().optional().describe('Indentation level (default 0)'),
+    },
+    handler: async (ctx, args) => {
+      const kind = args.kind as AudioKind;
+      const track: AudioTrack = {
+        name: args.name as string,
+        volume: args.volume,
+        pitch: args.pitch,
+        pan: args.pan,
+      };
+      const command = playAudio(kind, track, args.indent ?? 0);
+      const warnings = await audioNameWarnings(ctx.projectPath, kind, track.name);
+      return warnings.length > 0 ? { command, warnings } : { command };
+    },
+  },
+  {
+    name: 'build_screen_effect',
+    description:
+      'Build a screen transition/effect event command for insertion via insert_event_commands: fadeout (221) / fadein (222) — no params; tint (223) & flash (224) — an [r,g,b,a] color over `duration` frames; shake (225) — power/speed over `duration`. `wait` holds the event until it finishes. Read-only: returns { command }.',
+    inputSchema: {
+      kind: z
+        .enum(['fadeout', 'fadein', 'tint', 'flash', 'shake'])
+        .describe('Which screen effect to build'),
+      color: z
+        .array(z.number())
+        .length(4)
+        .optional()
+        .describe(
+          'tint: [red,green,blue,gray] (−255…255); flash: [red,green,blue,intensity] (0…255)',
+        ),
+      power: z.number().optional().describe('shake: strength 1–9 (default 5)'),
+      speed: z.number().optional().describe('shake: speed 1–9 (default 5)'),
+      duration: z.number().optional().describe('tint/flash/shake: frames (default 60)'),
+      wait: z
+        .boolean()
+        .optional()
+        .describe('tint/flash/shake: hold the event until it finishes (default true)'),
+      indent: z.number().int().optional().describe('Indentation level (default 0)'),
+    },
+    handler: async (_ctx, args) => {
+      const indent = args.indent ?? 0;
+      const duration = (args.duration as number | undefined) ?? 60;
+      const wait = (args.wait as boolean | undefined) ?? true;
+      switch (args.kind) {
+        case 'fadeout':
+          return { command: fadeScreen('out', indent) };
+        case 'fadein':
+          return { command: fadeScreen('in', indent) };
+        case 'tint':
+          return { command: tintScreen(toColorTone(args.color), duration, wait, indent) };
+        case 'flash':
+          return { command: flashScreen(toColorTone(args.color), duration, wait, indent) };
+        case 'shake':
+          return {
+            command: shakeScreen(
+              (args.power as number | undefined) ?? 5,
+              (args.speed as number | undefined) ?? 5,
+              duration,
+              wait,
+              indent,
+            ),
+          };
+        default:
+          throw new Error(`Unknown screen effect kind: ${args.kind}`);
+      }
+    },
+  },
+  {
+    name: 'build_picture',
+    description:
+      'Build a Show Picture (231) or Erase Picture (235) event command for insertion via insert_event_commands. show: display `name` in slot `pictureId` with origin/position/scale/opacity/blend; erase: clear the slot. Read-only: returns { command }.',
+    inputSchema: {
+      kind: z.enum(['show', 'erase']).describe('Show a picture or erase a slot'),
+      pictureId: z.number().int().describe('Picture slot 1–100'),
+      name: z.string().optional().describe('show: picture basename (from list_assets("pictures"))'),
+      origin: z
+        .enum(['upper_left', 'center'])
+        .optional()
+        .describe('show: anchor point (default upper_left)'),
+      x: z.number().optional().describe('show: screen x in pixels (default 0)'),
+      y: z.number().optional().describe('show: screen y in pixels (default 0)'),
+      scaleX: z.number().optional().describe('show: horizontal scale % (default 100)'),
+      scaleY: z.number().optional().describe('show: vertical scale % (default 100)'),
+      opacity: z.number().optional().describe('show: opacity 0–255 (default 255)'),
+      blend: z
+        .enum(['normal', 'additive', 'multiply', 'screen'])
+        .optional()
+        .describe('show: blend mode (default normal)'),
+      indent: z.number().int().optional().describe('Indentation level (default 0)'),
+    },
+    handler: async (_ctx, args) => {
+      const indent = args.indent ?? 0;
+      const pictureId = args.pictureId as number;
+      if (args.kind === 'erase') {
+        return { command: erasePicture(pictureId, indent) };
+      }
+      if (typeof args.name !== 'string') throw new Error('show requires `name`');
+      const options: ShowPictureOptions = {
+        origin: args.origin as PictureOrigin | undefined,
+        x: args.x as number | undefined,
+        y: args.y as number | undefined,
+        scaleX: args.scaleX as number | undefined,
+        scaleY: args.scaleY as number | undefined,
+        opacity: args.opacity as number | undefined,
+        blend: args.blend as BlendMode | undefined,
+        indent,
+      };
+      return { command: showPicture(pictureId, args.name, options) };
+    },
+  },
+  {
+    name: 'build_character_effect',
+    description:
+      'Build a Show Animation (212) or Show Balloon Icon (213) event command for insertion via insert_event_commands, played over a character (characterId: -1 player, 0 this event, N event id). Read-only: returns { command }.',
+    inputSchema: {
+      kind: z.enum(['animation', 'balloon']).describe('Play an animation or a balloon icon'),
+      characterId: z
+        .number()
+        .int()
+        .describe('Target character: -1 player, 0 this event, N event id on the current map'),
+      id: z
+        .number()
+        .int()
+        .describe(
+          'animation: the animation id; balloon: the balloon id (1 exclamation, 2 question, …)',
+        ),
+      wait: z.boolean().optional().describe('Hold the event until it finishes (default false)'),
+      indent: z.number().int().optional().describe('Indentation level (default 0)'),
+    },
+    handler: async (_ctx, args) => {
+      const characterId = args.characterId as number;
+      const id = args.id as number;
+      const wait = (args.wait as boolean | undefined) ?? false;
+      const indent = args.indent ?? 0;
+      return {
+        command:
+          args.kind === 'balloon'
+            ? showBalloon(characterId, id, wait, indent)
+            : showAnimation(characterId, id, wait, indent),
       };
     },
   },

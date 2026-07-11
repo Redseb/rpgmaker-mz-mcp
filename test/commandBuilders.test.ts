@@ -16,6 +16,16 @@ import {
   changeWeapons,
   changeArmors,
   changePartyMember,
+  transferPlayer,
+  playAudio,
+  fadeScreen,
+  tintScreen,
+  flashScreen,
+  shakeScreen,
+  showPicture,
+  erasePicture,
+  showAnimation,
+  showBalloon,
 } from '../src/events/commandBuilders.js';
 
 /**
@@ -227,5 +237,85 @@ describe('game-state builders (byte-exact)', () => {
       parameters: [2, 0, true],
     });
     expect(changePartyMember(2, 'remove').parameters).toEqual([2, 1, false]);
+  });
+});
+
+/**
+ * Presentation & transition builders (Phase 5e-3). Param encodings verified against
+ * the corescript command201/212/213/221–225/231/235/241–250 handlers (rmmz_objects.js
+ * v1.9.0); shapes cross-checked against real editor output where present
+ * (201 [0,2,16,0,0,0]; 213 [0,4,false]; 224 [[255,255,255,170],60,true]; 249/250 audio).
+ */
+describe('presentation builders (byte-exact)', () => {
+  it('transfer player encodes designation/direction/fade', () => {
+    // Real editor output: direct transfer to map 2 at (16,0), retain facing, black fade.
+    expect(transferPlayer(2, 16, 0)).toEqual({
+      code: 201,
+      indent: 0,
+      parameters: [0, 2, 16, 0, 0, 0],
+    });
+    expect(transferPlayer(5, 3, 4, { direction: 'up', fade: 'none' }).parameters).toEqual([
+      0, 5, 3, 4, 8, 2,
+    ]);
+    // designation 'variable' → params[0] = 1, and mapId/x/y are variable ids.
+    expect(transferPlayer(1, 2, 3, { designation: 'variable' }).parameters).toEqual([
+      1, 1, 2, 3, 0, 0,
+    ]);
+  });
+
+  it('play audio emits the {name,volume,pitch,pan} object on the right code', () => {
+    expect(playAudio('me', { name: 'Inn2' })).toEqual({
+      code: 249,
+      indent: 0,
+      parameters: [{ name: 'Inn2', volume: 90, pitch: 100, pan: 0 }],
+    });
+    expect(playAudio('se', { name: 'Move1', volume: 80, pitch: 120, pan: -50 }).parameters).toEqual(
+      [{ name: 'Move1', volume: 80, pitch: 120, pan: -50 }],
+    );
+    expect(playAudio('bgm', { name: 'Battle1' }).code).toBe(241);
+    expect(playAudio('bgs', { name: 'City' }).code).toBe(245);
+  });
+
+  it('screen fade/tint/flash/shake match the editor param layout', () => {
+    expect(fadeScreen('out')).toEqual({ code: 221, indent: 0, parameters: [] });
+    expect(fadeScreen('in')).toEqual({ code: 222, indent: 0, parameters: [] });
+    expect(tintScreen([-68, -68, 0, 68], 60, true)).toEqual({
+      code: 223,
+      indent: 0,
+      parameters: [[-68, -68, 0, 68], 60, true],
+    });
+    // Real editor output for a white flash.
+    expect(flashScreen([255, 255, 255, 170], 60, true).parameters).toEqual([
+      [255, 255, 255, 170],
+      60,
+      true,
+    ]);
+    expect(shakeScreen(5, 5, 60, false)).toEqual({
+      code: 225,
+      indent: 0,
+      parameters: [5, 5, 60, false],
+    });
+  });
+
+  it('show/erase picture encode the full parameter list', () => {
+    expect(showPicture(1, 'Title', { origin: 'center', x: 100, y: 50, opacity: 200 })).toEqual({
+      code: 231,
+      indent: 0,
+      parameters: [1, 'Title', 1, 0, 100, 50, 100, 100, 200, 0],
+    });
+    // defaults: upper_left origin, (0,0), 100% scale, 255 opacity, normal blend.
+    expect(showPicture(2, 'Bg').parameters).toEqual([2, 'Bg', 0, 0, 0, 0, 100, 100, 255, 0]);
+    expect(showPicture(3, 'X', { blend: 'screen' }).parameters[9]).toBe(3);
+    expect(erasePicture(4)).toEqual({ code: 235, indent: 0, parameters: [4] });
+  });
+
+  it('show animation / balloon encode character + id + wait', () => {
+    // Real editor output: balloon 4 over this event, no wait.
+    expect(showBalloon(0, 4)).toEqual({ code: 213, indent: 0, parameters: [0, 4, false] });
+    expect(showAnimation(-1, 12, true)).toEqual({
+      code: 212,
+      indent: 0,
+      parameters: [-1, 12, true],
+    });
   });
 });

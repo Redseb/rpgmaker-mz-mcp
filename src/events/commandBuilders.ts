@@ -35,7 +35,21 @@ const CODE = {
   CHANGE_WEAPONS: 127,
   CHANGE_ARMORS: 128,
   CHANGE_PARTY_MEMBER: 129,
+  TRANSFER_PLAYER: 201,
+  SHOW_ANIMATION: 212,
+  SHOW_BALLOON: 213,
+  FADEOUT_SCREEN: 221,
+  FADEIN_SCREEN: 222,
+  TINT_SCREEN: 223,
+  FLASH_SCREEN: 224,
+  SHAKE_SCREEN: 225,
   WAIT: 230,
+  SHOW_PICTURE: 231,
+  ERASE_PICTURE: 235,
+  PLAY_BGM: 241,
+  PLAY_BGS: 245,
+  PLAY_ME: 249,
+  PLAY_SE: 250,
   END_OF_LIST: 0,
 } as const;
 
@@ -476,4 +490,237 @@ export function changePartyMember(
     operation === 'remove' ? 1 : 0,
     initialize,
   ]);
+}
+
+// --- 5e-3 presentation & transitions ---
+
+/** The direction the player faces after a Transfer Player (retain = keep current). */
+export type TransferDirection = 'retain' | 'down' | 'left' | 'right' | 'up';
+const TRANSFER_DIRECTION_CODE: Record<TransferDirection, number> = {
+  retain: 0,
+  down: 2,
+  left: 4,
+  right: 6,
+  up: 8,
+};
+/** The screen fade used by Transfer Player. */
+export type TransferFade = 'black' | 'white' | 'none';
+const TRANSFER_FADE_CODE: Record<TransferFade, number> = { black: 0, white: 1, none: 2 };
+
+export interface TransferPlayerOptions {
+  /** Facing after transfer. Default 'retain'. */
+  direction?: TransferDirection;
+  /** Fade style. Default 'black'. */
+  fade?: TransferFade;
+  /**
+   * When 'variable', `mapId`/`x`/`y` are read as *variable ids* holding the real
+   * destination at runtime (Designation with variables). Default 'direct'.
+   */
+  designation?: 'direct' | 'variable';
+  /** Indentation level. Default 0. */
+  indent?: number;
+}
+
+/**
+ * Transfer Player (command 201) — move the party to `(x, y)` on map `mapId`. On
+ * disk: `[designation(0 direct/1 variable), mapId, x, y, direction, fade]`. With
+ * `designation: 'variable'`, `mapId`/`x`/`y` are variable ids resolved at runtime.
+ */
+export function transferPlayer(
+  mapId: number,
+  x: number,
+  y: number,
+  options: TransferPlayerOptions = {},
+): EventCommand {
+  return cmd(CODE.TRANSFER_PLAYER, options.indent ?? 0, [
+    options.designation === 'variable' ? 1 : 0,
+    mapId,
+    x,
+    y,
+    TRANSFER_DIRECTION_CODE[options.direction ?? 'retain'],
+    TRANSFER_FADE_CODE[options.fade ?? 'black'],
+  ]);
+}
+
+/** An audio track reference — the `{ name, volume, pitch, pan }` object the editor writes. */
+export interface AudioTrack {
+  /** Audio basename (from list_assets, extension stripped). */
+  name: string;
+  /** Volume 0–100. Default 90. */
+  volume?: number;
+  /** Pitch 50–150. Default 100. */
+  pitch?: number;
+  /** Pan -100–100. Default 0. */
+  pan?: number;
+}
+
+/** Which audio channel to play on — maps to the play command code. */
+export type AudioKind = 'bgm' | 'bgs' | 'me' | 'se';
+const AUDIO_CODE: Record<AudioKind, number> = {
+  bgm: CODE.PLAY_BGM,
+  bgs: CODE.PLAY_BGS,
+  me: CODE.PLAY_ME,
+  se: CODE.PLAY_SE,
+};
+
+/** Normalize an {@link AudioTrack} into the on-disk audio object with defaults filled. */
+function audioParam(track: AudioTrack): Record<string, unknown> {
+  return {
+    name: track.name,
+    volume: track.volume ?? 90,
+    pitch: track.pitch ?? 100,
+    pan: track.pan ?? 0,
+  };
+}
+
+/**
+ * Play BGM/BGS/ME/SE (commands 241/245/249/250) — start a track on the given audio
+ * channel. On disk: `[{ name, volume, pitch, pan }]` (a single audio object).
+ */
+export function playAudio(kind: AudioKind, track: AudioTrack, indent = 0): EventCommand {
+  return cmd(AUDIO_CODE[kind], indent, [audioParam(track)]);
+}
+
+/** Fade the screen out (to a colour) or back in. */
+export type ScreenFade = 'out' | 'in';
+
+/**
+ * Fadeout/Fadein Screen (commands 221/222) — no parameters; the fade colour is the
+ * one last set by a Tint Screen (defaults to black).
+ */
+export function fadeScreen(direction: ScreenFade, indent = 0): EventCommand {
+  return cmd(direction === 'in' ? CODE.FADEIN_SCREEN : CODE.FADEOUT_SCREEN, indent, []);
+}
+
+/** An `[r, g, b, a]` tuple — RGB plus a fourth channel (gray for tint, intensity for flash). */
+export type ColorTone = [number, number, number, number];
+
+/**
+ * Tint Screen (command 223) — shift the screen tone over `duration` frames. `tone`
+ * is `[red, green, blue, gray]`, each −255…255 (0,0,0,0 = normal). On disk:
+ * `[tone, duration, wait]`.
+ */
+export function tintScreen(tone: ColorTone, duration = 60, wait = true, indent = 0): EventCommand {
+  return cmd(CODE.TINT_SCREEN, indent, [tone, duration, wait]);
+}
+
+/**
+ * Flash Screen (command 224) — flash a colour over `duration` frames. `color` is
+ * `[red, green, blue, intensity]`, each 0…255. On disk: `[color, duration, wait]`.
+ */
+export function flashScreen(
+  color: ColorTone,
+  duration = 60,
+  wait = true,
+  indent = 0,
+): EventCommand {
+  return cmd(CODE.FLASH_SCREEN, indent, [color, duration, wait]);
+}
+
+/**
+ * Shake Screen (command 225) — shake for `duration` frames. On disk:
+ * `[power(1–9), speed(1–9), duration, wait]`.
+ */
+export function shakeScreen(
+  power = 5,
+  speed = 5,
+  duration = 60,
+  wait = true,
+  indent = 0,
+): EventCommand {
+  return cmd(CODE.SHAKE_SCREEN, indent, [power, speed, duration, wait]);
+}
+
+/** Where a picture is anchored: its upper-left corner or its center. */
+export type PictureOrigin = 'upper_left' | 'center';
+const PICTURE_ORIGIN_CODE: Record<PictureOrigin, number> = { upper_left: 0, center: 1 };
+/** How a picture blends with what's behind it. */
+export type BlendMode = 'normal' | 'additive' | 'multiply' | 'screen';
+const BLEND_MODE_CODE: Record<BlendMode, number> = {
+  normal: 0,
+  additive: 1,
+  multiply: 2,
+  screen: 3,
+};
+
+export interface ShowPictureOptions {
+  /** Anchor point. Default 'upper_left'. */
+  origin?: PictureOrigin;
+  /** Screen x (pixels). Default 0. */
+  x?: number;
+  /** Screen y (pixels). Default 0. */
+  y?: number;
+  /** Horizontal scale (%). Default 100. */
+  scaleX?: number;
+  /** Vertical scale (%). Default 100. */
+  scaleY?: number;
+  /** Opacity 0–255. Default 255. */
+  opacity?: number;
+  /** Blend mode. Default 'normal'. */
+  blend?: BlendMode;
+  /** Indentation level. Default 0. */
+  indent?: number;
+}
+
+/**
+ * Show Picture (command 231) — display picture `name` in slot `pictureId` (1–100).
+ * On disk: `[pictureId, name, origin, 0 (direct position), x, y, scaleX, scaleY,
+ * opacity, blend]` — the position is always a direct designation here (variable
+ * positioning isn't exposed).
+ */
+export function showPicture(
+  pictureId: number,
+  name: string,
+  options: ShowPictureOptions = {},
+): EventCommand {
+  return cmd(CODE.SHOW_PICTURE, options.indent ?? 0, [
+    pictureId,
+    name,
+    PICTURE_ORIGIN_CODE[options.origin ?? 'upper_left'],
+    0,
+    options.x ?? 0,
+    options.y ?? 0,
+    options.scaleX ?? 100,
+    options.scaleY ?? 100,
+    options.opacity ?? 255,
+    BLEND_MODE_CODE[options.blend ?? 'normal'],
+  ]);
+}
+
+/** Erase Picture (command 235) — remove the picture in slot `pictureId`. */
+export function erasePicture(pictureId: number, indent = 0): EventCommand {
+  return cmd(CODE.ERASE_PICTURE, indent, [pictureId]);
+}
+
+/**
+ * A character reference for Show Animation / Show Balloon: -1 = player, 0 = this
+ * event, N = event id N on the current map (same convention as move routes).
+ */
+export type CharacterTarget = number;
+
+/**
+ * Show Animation (command 212) — play animation `animationId` on `characterId`.
+ * `wait` holds event execution until it finishes. On disk: `[characterId,
+ * animationId, wait]`.
+ */
+export function showAnimation(
+  characterId: CharacterTarget,
+  animationId: number,
+  wait = false,
+  indent = 0,
+): EventCommand {
+  return cmd(CODE.SHOW_ANIMATION, indent, [characterId, animationId, wait]);
+}
+
+/**
+ * Show Balloon Icon (command 213) — show balloon `balloonId` (1 exclamation, 2
+ * question, …) over `characterId`. On disk: `[characterId, balloonId, wait]`.
+ */
+export function showBalloon(
+  characterId: CharacterTarget,
+  balloonId: number,
+  wait = false,
+  indent = 0,
+): EventCommand {
+  return cmd(CODE.SHOW_BALLOON, indent, [characterId, balloonId, wait]);
 }
