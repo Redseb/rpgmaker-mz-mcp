@@ -8,6 +8,7 @@ import { classToolDefinitions } from './classTools.js';
 import { stateToolDefinitions } from './stateTools.js';
 import { commonEventToolDefinitions } from './commonEventTools.js';
 import { moveToolDefinitions } from './moveTools.js';
+import { eventCommandToolDefinitions } from './eventCommandTools.js';
 import { pluginToolDefinitions } from './pluginTools.js';
 import { tileToolDefinitions } from './tileTools.js';
 import { catalogToolDefinitions } from './catalogTools.js';
@@ -34,6 +35,7 @@ export const allToolDefinitions: ToolDefinition[] = [
   ...stateToolDefinitions,
   ...commonEventToolDefinitions,
   ...moveToolDefinitions,
+  ...eventCommandToolDefinitions,
   ...pluginToolDefinitions,
   ...tileToolDefinitions,
   ...catalogToolDefinitions,
