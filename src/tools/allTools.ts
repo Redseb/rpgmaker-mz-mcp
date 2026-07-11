@@ -5,6 +5,7 @@ import { skillToolDefinitions } from './skillTools.js';
 import { mapToolDefinitions } from './mapTools.js';
 import { battleToolDefinitions } from './battleTools.js';
 import { classToolDefinitions } from './classTools.js';
+import { stateToolDefinitions } from './stateTools.js';
 import { commonEventToolDefinitions } from './commonEventTools.js';
 import { moveToolDefinitions } from './moveTools.js';
 import { pluginToolDefinitions } from './pluginTools.js';
@@ -29,6 +30,7 @@ export const allToolDefinitions: ToolDefinition[] = [
   ...mapToolDefinitions,
   ...battleToolDefinitions,
   ...classToolDefinitions,
+  ...stateToolDefinitions,
   ...commonEventToolDefinitions,
   ...moveToolDefinitions,
   ...pluginToolDefinitions,

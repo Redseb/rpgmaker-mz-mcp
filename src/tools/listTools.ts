@@ -16,6 +16,7 @@ export const LISTABLE_FILES = {
   skills: 'Skills.json',
   enemies: 'Enemies.json',
   troops: 'Troops.json',
+  states: 'States.json',
   common_events: 'CommonEvents.json',
   maps: 'MapInfos.json',
 } as const;
@@ -63,7 +64,7 @@ export const listToolDefinitions: ToolDefinition[] = [
       type: z
         .enum(Object.keys(LISTABLE_FILES) as [ListableType, ...ListableType[]])
         .describe(
-          'Which table to index: actors, classes, items, weapons, armors, skills, enemies, troops, common_events, or maps.',
+          'Which table to index: actors, classes, items, weapons, armors, skills, enemies, troops, states, common_events, or maps.',
         ),
     },
     handler: (ctx, args) => listNames(ctx.projectPath, args.type),

@@ -154,6 +154,59 @@ export interface CommonEvent {
   trigger: number;
 }
 
+/**
+ * A state (`data/States.json`): a status condition (Poison, Sleep, Dead, …) that
+ * can be applied to a battler by skills/items/traits. The file is a 1-indexed
+ * array (slot 0 null, index === id). States are referenced by skill/item effects
+ * (e.g. `create_state_skill`) and by traits, so an id must exist to be usable.
+ */
+export interface State {
+  id: number;
+  name: string;
+  /** Behavior restriction: 0 none, 1 attack enemy, 2 attack anyone, 3 attack ally, 4 cannot move. */
+  restriction: number;
+  /** Display priority when several states share an icon slot (higher wins), 0-100. */
+  priority: number;
+  /** SV-actor motion played while afflicted (0 normal, 1 abnormal, 2 sleep, 3 dead, …). */
+  motion: number;
+  /** Overlay animation index drawn over the battler (0 = none). */
+  overlay: number;
+  /** Remove automatically when the battle ends. */
+  removeAtBattleEnd: boolean;
+  /** Remove when the battler's restriction changes. */
+  removeByRestriction: boolean;
+  /** Auto-removal timing: 0 none, 1 at action end, 2 at turn end. */
+  autoRemovalTiming: number;
+  /** Minimum duration in turns when auto-removed. */
+  minTurns: number;
+  /** Maximum duration in turns when auto-removed. */
+  maxTurns: number;
+  /** Remove when the battler takes damage. */
+  removeByDamage: boolean;
+  /** Chance (%) of removal per damage instance when `removeByDamage`. */
+  chanceByDamage: number;
+  /** Remove after walking a number of steps (on the map). */
+  removeByWalking: boolean;
+  /** Steps to walk off the state when `removeByWalking`. */
+  stepsToRemove: number;
+  /** Whether damage can release the state (MZ addition alongside removeByDamage). */
+  releaseByDamage: boolean;
+  /** Icon shown on the battler/status (0 = none). */
+  iconIndex: number;
+  /** Message when an actor gains the state. */
+  message1: string;
+  /** Message when an enemy gains the state. */
+  message2: string;
+  /** Message when the state persists. */
+  message3: string;
+  /** Message when the state is removed. */
+  message4: string;
+  /** Which battler's message form to use (engine's message routing). */
+  messageType: number;
+  traits: Trait[];
+  note: string;
+}
+
 export interface Trait {
   code: number;
   dataId: number;
