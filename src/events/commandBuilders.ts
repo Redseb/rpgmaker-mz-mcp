@@ -50,6 +50,16 @@ const CODE = {
   PLAY_BGS: 245,
   PLAY_ME: 249,
   PLAY_SE: 250,
+  BATTLE_PROCESSING: 301,
+  SHOP_PROCESSING: 302,
+  SHOP_GOODS: 605,
+  NAME_INPUT: 303,
+  CHANGE_HP: 311,
+  CHANGE_MP: 312,
+  CHANGE_STATE: 313,
+  RECOVER_ALL: 314,
+  CHANGE_EXP: 315,
+  CHANGE_LEVEL: 316,
   END_OF_LIST: 0,
 } as const;
 
@@ -723,4 +733,191 @@ export function showBalloon(
   indent = 0,
 ): EventCommand {
   return cmd(CODE.SHOW_BALLOON, indent, [characterId, balloonId, wait]);
+}
+
+// --- 5e-4 scenes ---
+
+/**
+ * Which troop a Battle Processing command fights: a `direct` troop id, a `variable`
+ * holding the troop id at runtime, or `random` (same as the map's random encounters).
+ */
+export type BattleTroop =
+  | { type: 'direct'; troopId: number }
+  | { type: 'variable'; variableId: number }
+  | { type: 'random' };
+
+/**
+ * Battle Processing (command 301) — start a battle against a troop. On disk:
+ * `[designation(0 direct/1 variable/2 random), troopId, canEscape, canLose]`. With
+ * `variable`, param[1] is a variable id; with `random` it is ignored. `canEscape`
+ * / `canLose` are engine-truthy JS booleans on disk.
+ */
+export function battleProcessing(
+  troop: BattleTroop,
+  canEscape = false,
+  canLose = false,
+  indent = 0,
+): EventCommand {
+  const designation: [number, number] =
+    troop.type === 'variable'
+      ? [1, troop.variableId]
+      : troop.type === 'random'
+        ? [2, 0]
+        : [0, troop.troopId];
+  return cmd(CODE.BATTLE_PROCESSING, indent, [...designation, canEscape, canLose]);
+}
+
+/** A single item offered in a shop. `price` set = Specify price; omitted = the database's standard price. */
+export interface ShopGood {
+  /** What kind of thing is for sale. */
+  kind: 'item' | 'weapon' | 'armor';
+  /** The item/weapon/armor id. */
+  id: number;
+  /** Override price. When set, priceType = Specify; when omitted, the database price is used. */
+  price?: number;
+}
+const SHOP_GOOD_KIND_CODE: Record<ShopGood['kind'], number> = { item: 0, weapon: 1, armor: 2 };
+
+/** Encode one shop good as `[kind, id, priceType(0 standard/1 specify), price]`. */
+function shopGoodParams(good: ShopGood): unknown[] {
+  const specify = good.price !== undefined;
+  return [SHOP_GOOD_KIND_CODE[good.kind], good.id, specify ? 1 : 0, specify ? good.price : 0];
+}
+
+/**
+ * Shop Processing (command 302 + one 605 continuation row per extra good) — open a
+ * shop selling `goods`. The 302 carries the first good plus `purchaseOnly` as a 5th
+ * param `[kind, id, priceType, price, purchaseOnly]`; each additional good is a 605
+ * row `[kind, id, priceType, price]` — exactly as the editor serializes them.
+ */
+export function shopProcessing(
+  goods: ShopGood[],
+  purchaseOnly = false,
+  indent = 0,
+): EventCommand[] {
+  if (!Array.isArray(goods) || goods.length === 0) {
+    throw new Error('shopProcessing requires a non-empty `goods` array');
+  }
+  const [first, ...rest] = goods;
+  const out: EventCommand[] = [
+    cmd(CODE.SHOP_PROCESSING, indent, [...shopGoodParams(first), purchaseOnly]),
+  ];
+  rest.forEach((good) => out.push(cmd(CODE.SHOP_GOODS, indent, shopGoodParams(good))));
+  return out;
+}
+
+/**
+ * Name Input Processing (command 303) — open the name-entry screen for `actorId`.
+ * `maxLength` (default 8) caps the entered name. On disk: `[actorId, maxLength]`.
+ */
+export function nameInput(actorId: number, maxLength = 8, indent = 0): EventCommand {
+  return cmd(CODE.NAME_INPUT, indent, [actorId, maxLength]);
+}
+
+/**
+ * Which actor(s) a Change HP/MP/State/EXP/Level/Recover-All command targets:
+ * a `fixed` actor id (0 = the entire party), or a `variable` holding the actor id.
+ * On disk this is the leading `[designation(0 fixed/1 variable), actorId]` pair.
+ */
+export type ActorTarget =
+  { type: 'fixed'; actorId: number } | { type: 'variable'; variableId: number };
+
+/** Encode an {@link ActorTarget} as the leading `[designation, actorId]` pair. */
+function actorTargetParams(target: ActorTarget): [number, number] {
+  return target.type === 'variable' ? [1, target.variableId] : [0, target.actorId];
+}
+
+/**
+ * Change HP (command 311) — gain or lose HP on the target actor(s) by a constant or
+ * variable amount. `allowKnockout` (default false) permits the change to reduce HP to
+ * 0 (death). On disk: `[designation, actorId, operation, operandType, operand, allowKnockout]`.
+ */
+export function changeHp(
+  target: ActorTarget,
+  operation: GainOperation,
+  operand: GainOperand,
+  allowKnockout = false,
+  indent = 0,
+): EventCommand {
+  return cmd(CODE.CHANGE_HP, indent, [
+    ...actorTargetParams(target),
+    ...operateValueParams(operation, operand),
+    allowKnockout,
+  ]);
+}
+
+/**
+ * Change MP (command 312) — gain or lose MP on the target actor(s). On disk:
+ * `[designation, actorId, operation, operandType, operand]`.
+ */
+export function changeMp(
+  target: ActorTarget,
+  operation: GainOperation,
+  operand: GainOperand,
+  indent = 0,
+): EventCommand {
+  return cmd(CODE.CHANGE_MP, indent, [
+    ...actorTargetParams(target),
+    ...operateValueParams(operation, operand),
+  ]);
+}
+
+/**
+ * Change State (command 313) — add or remove a state on the target actor(s). On disk:
+ * `[designation, actorId, operation(0 add/1 remove), stateId]`.
+ */
+export function changeState(
+  target: ActorTarget,
+  operation: 'add' | 'remove',
+  stateId: number,
+  indent = 0,
+): EventCommand {
+  return cmd(CODE.CHANGE_STATE, indent, [
+    ...actorTargetParams(target),
+    operation === 'remove' ? 1 : 0,
+    stateId,
+  ]);
+}
+
+/** Recover All (command 314) — fully restore HP/MP and clear states on the target actor(s). */
+export function recoverAll(target: ActorTarget, indent = 0): EventCommand {
+  return cmd(CODE.RECOVER_ALL, indent, [...actorTargetParams(target)]);
+}
+
+/**
+ * Change EXP (command 315) — gain or lose experience on the target actor(s).
+ * `showLevelUp` (default false) shows the level-up message. On disk:
+ * `[designation, actorId, operation, operandType, operand, showLevelUp]`.
+ */
+export function changeExp(
+  target: ActorTarget,
+  operation: GainOperation,
+  operand: GainOperand,
+  showLevelUp = false,
+  indent = 0,
+): EventCommand {
+  return cmd(CODE.CHANGE_EXP, indent, [
+    ...actorTargetParams(target),
+    ...operateValueParams(operation, operand),
+    showLevelUp,
+  ]);
+}
+
+/**
+ * Change Level (command 316) — raise or lower level on the target actor(s).
+ * `showLevelUp` (default false) shows the level-up message. On disk:
+ * `[designation, actorId, operation, operandType, operand, showLevelUp]`.
+ */
+export function changeLevel(
+  target: ActorTarget,
+  operation: GainOperation,
+  operand: GainOperand,
+  showLevelUp = false,
+  indent = 0,
+): EventCommand {
+  return cmd(CODE.CHANGE_LEVEL, indent, [
+    ...actorTargetParams(target),
+    ...operateValueParams(operation, operand),
+    showLevelUp,
+  ]);
 }

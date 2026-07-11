@@ -30,6 +30,18 @@ import {
   erasePicture,
   showAnimation,
   showBalloon,
+  battleProcessing,
+  shopProcessing,
+  nameInput,
+  changeHp,
+  changeMp,
+  changeState,
+  recoverAll,
+  changeExp,
+  changeLevel,
+  BattleTroop,
+  ShopGood,
+  ActorTarget,
   BranchCondition,
   ShowTextOptions,
   ShowChoicesOptions,
@@ -272,6 +284,26 @@ async function audioNameWarnings(
     ];
   }
   return [];
+}
+
+/** Zod shape for an actor target (fixed actor id / 0 = whole party, or a variable). */
+const actorTargetShape = z
+  .object({
+    type: z.enum(['fixed', 'variable']).describe('fixed actor id (0 = whole party) or a variable'),
+    actorId: z.number().int().optional().describe('fixed: the actor id (0 = entire party)'),
+    variableId: z
+      .number()
+      .int()
+      .optional()
+      .describe('variable: the variable id holding the actor id'),
+  })
+  .describe('Which actor(s) the change applies to');
+
+/** Map the flat actor-target input to the discriminated {@link ActorTarget}. */
+function toActorTarget(t: Record<string, unknown>): ActorTarget {
+  return t.type === 'variable'
+    ? { type: 'variable', variableId: (t.variableId as number) ?? 0 }
+    : { type: 'fixed', actorId: (t.actorId as number) ?? 0 };
 }
 
 export const eventCommandToolDefinitions: ToolDefinition[] = [
@@ -728,6 +760,165 @@ export const eventCommandToolDefinitions: ToolDefinition[] = [
             ? showBalloon(characterId, id, wait, indent)
             : showAnimation(characterId, id, wait, indent),
       };
+    },
+  },
+  {
+    name: 'build_battle_processing',
+    description:
+      'Build a Battle Processing (301) event command for insertion via insert_event_commands — start a battle against a troop (direct id, a variable holding the id, or "random" like the map encounters). canEscape/canLose gate the battle result branches. Read-only: returns { command }.',
+    inputSchema: {
+      troop: z
+        .enum(['direct', 'variable', 'random'])
+        .describe('How the troop is chosen (default direct)')
+        .optional(),
+      troopId: z
+        .number()
+        .int()
+        .optional()
+        .describe('direct: the troop id; variable: the variable id holding it'),
+      canEscape: z.boolean().optional().describe('Allow the party to escape (default false)'),
+      canLose: z
+        .boolean()
+        .optional()
+        .describe('Continue the event if the party loses (default false)'),
+      indent: z.number().int().optional().describe('Indentation level (default 0)'),
+    },
+    handler: async (_ctx, args) => {
+      const mode = (args.troop as 'direct' | 'variable' | 'random' | undefined) ?? 'direct';
+      let troop: BattleTroop;
+      if (mode === 'random') {
+        troop = { type: 'random' };
+      } else if (mode === 'variable') {
+        if (typeof args.troopId !== 'number')
+          throw new Error('variable troop requires `troopId` (a variable id)');
+        troop = { type: 'variable', variableId: args.troopId };
+      } else {
+        if (typeof args.troopId !== 'number') throw new Error('direct troop requires `troopId`');
+        troop = { type: 'direct', troopId: args.troopId };
+      }
+      return {
+        command: battleProcessing(
+          troop,
+          args.canEscape ?? false,
+          args.canLose ?? false,
+          args.indent ?? 0,
+        ),
+      };
+    },
+  },
+  {
+    name: 'build_shop_processing',
+    description:
+      'Build a Shop Processing (302 + one 605 row per extra good) event-command sequence for insertion via insert_event_commands. Each good sells an item/weapon/armor at its database price, or a specified `price`. purchaseOnly hides the sell tab. Read-only: returns { commands }.',
+    inputSchema: {
+      goods: z
+        .array(
+          z.object({
+            kind: z.enum(['item', 'weapon', 'armor']).describe('What is for sale'),
+            id: z.number().int().describe('The item/weapon/armor id'),
+            price: z
+              .number()
+              .int()
+              .optional()
+              .describe('Override price (omitted = the database standard price)'),
+          }),
+        )
+        .describe('The goods offered (at least one)'),
+      purchaseOnly: z.boolean().optional().describe('Hide the sell tab (default false)'),
+      indent: z.number().int().optional().describe('Indentation level (default 0)'),
+    },
+    handler: async (_ctx, args) => {
+      const goods = (args.goods as Record<string, unknown>[]).map((g) => ({
+        kind: g.kind as ShopGood['kind'],
+        id: g.id as number,
+        price: g.price as number | undefined,
+      }));
+      return {
+        commands: shopProcessing(goods, args.purchaseOnly ?? false, args.indent ?? 0),
+      };
+    },
+  },
+  {
+    name: 'build_name_input',
+    description:
+      'Build a Name Input Processing (303) event command for insertion via insert_event_commands — open the name-entry screen for an actor. Read-only: returns { command }.',
+    inputSchema: {
+      actorId: z.number().int().describe('The actor whose name is entered'),
+      maxLength: z.number().int().optional().describe('Max name length (default 8)'),
+      indent: z.number().int().optional().describe('Indentation level (default 0)'),
+    },
+    handler: async (_ctx, args) => {
+      return {
+        command: nameInput(args.actorId as number, args.maxLength ?? 8, args.indent ?? 0),
+      };
+    },
+  },
+  {
+    name: 'build_change_actor',
+    description:
+      'Build an actor stat-change scene command for insertion via insert_event_commands: hp (311), mp (312), state (313), recover_all (314), exp (315), or level (316). Targets a fixed actor (0 = whole party) or a variable. hp/mp/exp/level take an increase/decrease `operand` (constant or variable); state takes add/remove + `stateId`; recover_all takes nothing extra. Read-only: returns { command }.',
+    inputSchema: {
+      kind: z
+        .enum(['hp', 'mp', 'state', 'recover_all', 'exp', 'level'])
+        .describe('Which actor change to build'),
+      target: actorTargetShape,
+      operation: z
+        .enum(['increase', 'decrease'])
+        .optional()
+        .describe('hp/mp/exp/level: gain or lose (default increase)'),
+      operand: gainOperandShape
+        .optional()
+        .describe('hp/mp/exp/level: the amount (constant/variable)'),
+      allowKnockout: z
+        .boolean()
+        .optional()
+        .describe('hp: allow the change to reduce HP to 0/death (default false)'),
+      showLevelUp: z
+        .boolean()
+        .optional()
+        .describe('exp/level: show the level-up message (default false)'),
+      stateOperation: z
+        .enum(['add', 'remove'])
+        .optional()
+        .describe('state: add or remove the state'),
+      stateId: z.number().int().optional().describe('state: the state id'),
+      indent: z.number().int().optional().describe('Indentation level (default 0)'),
+    },
+    handler: async (_ctx, args) => {
+      const target = toActorTarget(args.target as Record<string, unknown>);
+      const indent = args.indent ?? 0;
+      if (args.kind === 'recover_all') {
+        return { command: recoverAll(target, indent) };
+      }
+      if (args.kind === 'state') {
+        if (typeof args.stateId !== 'number') throw new Error('state change requires `stateId`');
+        return {
+          command: changeState(
+            target,
+            (args.stateOperation as 'add' | 'remove' | undefined) ?? 'add',
+            args.stateId,
+            indent,
+          ),
+        };
+      }
+      const operation = (args.operation as GainOperation | undefined) ?? 'increase';
+      const operand = toGainOperand((args.operand as Record<string, unknown>) ?? {});
+      switch (args.kind) {
+        case 'mp':
+          return { command: changeMp(target, operation, operand, indent) };
+        case 'exp':
+          return {
+            command: changeExp(target, operation, operand, args.showLevelUp ?? false, indent),
+          };
+        case 'level':
+          return {
+            command: changeLevel(target, operation, operand, args.showLevelUp ?? false, indent),
+          };
+        default:
+          return {
+            command: changeHp(target, operation, operand, args.allowKnockout ?? false, indent),
+          };
+      }
     },
   },
   {

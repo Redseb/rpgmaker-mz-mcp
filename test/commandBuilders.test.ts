@@ -26,6 +26,15 @@ import {
   erasePicture,
   showAnimation,
   showBalloon,
+  battleProcessing,
+  shopProcessing,
+  nameInput,
+  changeHp,
+  changeMp,
+  changeState,
+  recoverAll,
+  changeExp,
+  changeLevel,
 } from '../src/events/commandBuilders.js';
 
 /**
@@ -316,6 +325,103 @@ describe('presentation builders (byte-exact)', () => {
       code: 212,
       indent: 0,
       parameters: [-1, 12, true],
+    });
+  });
+});
+
+/**
+ * Scene builders (Phase 5e-4). Param encodings verified against the corescript
+ * command301/302/303/311–316 handlers (rmmz_objects.js v1.9.0) + real editor output
+ * (301 [0,1,true,false]; 302 [0,7,0,0,false] + 605 [0,10,0,0]; 311 [0,0,0,0,9999,false];
+ * 312 [0,0,0,0,9999]; 314 [0,0]; 315 [0,0,0,0,400,false]).
+ */
+describe('scene builders (byte-exact)', () => {
+  it('battle processing encodes troop designation + escape/lose flags', () => {
+    // Real editor output: direct troop 1, can escape, cannot lose.
+    expect(battleProcessing({ type: 'direct', troopId: 1 }, true, false)).toEqual({
+      code: 301,
+      indent: 0,
+      parameters: [0, 1, true, false],
+    });
+    expect(battleProcessing({ type: 'variable', variableId: 5 }).parameters).toEqual([
+      1,
+      5,
+      false,
+      false,
+    ]);
+    // 'random' → designation 2, troop id ignored (0).
+    expect(battleProcessing({ type: 'random' }, false, true).parameters).toEqual([
+      2,
+      0,
+      false,
+      true,
+    ]);
+  });
+
+  it('shop processing emits 302 setup + one 605 row per extra good', () => {
+    // Real editor output: first good is item 7 at db price, purchaseOnly false;
+    // extra goods (items 10/12/11) are 605 rows without the purchaseOnly param.
+    expect(
+      shopProcessing([
+        { kind: 'item', id: 7 },
+        { kind: 'item', id: 10 },
+        { kind: 'item', id: 12 },
+      ]),
+    ).toEqual([
+      { code: 302, indent: 0, parameters: [0, 7, 0, 0, false] },
+      { code: 605, indent: 0, parameters: [0, 10, 0, 0] },
+      { code: 605, indent: 0, parameters: [0, 12, 0, 0] },
+    ]);
+    // A specified price → priceType 1; weapon kind → 1, armor → 2; purchaseOnly → true.
+    expect(shopProcessing([{ kind: 'weapon', id: 3, price: 250 }], true)).toEqual([
+      { code: 302, indent: 0, parameters: [1, 3, 1, 250, true] },
+    ]);
+    expect(shopProcessing([{ kind: 'armor', id: 4 }])[0].parameters[0]).toBe(2);
+    expect(() => shopProcessing([])).toThrow();
+  });
+
+  it('name input encodes actor id + max length', () => {
+    expect(nameInput(1)).toEqual({ code: 303, indent: 0, parameters: [1, 8] });
+    expect(nameInput(2, 12).parameters).toEqual([2, 12]);
+  });
+
+  it('change hp/mp/exp/level encode actor target + operateValue triple + flag', () => {
+    // Real editor output: whole party (fixed 0), +9999 HP (variable operand 9999), no death.
+    expect(
+      changeHp({ type: 'fixed', actorId: 0 }, 'increase', { type: 'constant', value: 9999 }),
+    ).toEqual({ code: 311, indent: 0, parameters: [0, 0, 0, 0, 9999, false] });
+    // MP has no 6th flag param.
+    expect(
+      changeMp({ type: 'fixed', actorId: 0 }, 'increase', { type: 'constant', value: 9999 }),
+    ).toEqual({ code: 312, indent: 0, parameters: [0, 0, 0, 0, 9999] });
+    // EXP: showLevelUp flag; decrease → operation 1; variable operand → operandType 1.
+    expect(
+      changeExp({ type: 'fixed', actorId: 0 }, 'increase', { type: 'constant', value: 400 }),
+    ).toEqual({ code: 315, indent: 0, parameters: [0, 0, 0, 0, 400, false] });
+    expect(
+      changeLevel(
+        { type: 'variable', variableId: 3 },
+        'decrease',
+        { type: 'variable', variableId: 7 },
+        true,
+      ).parameters,
+    ).toEqual([1, 3, 1, 1, 7, true]);
+  });
+
+  it('change state and recover all encode the actor target', () => {
+    expect(changeState({ type: 'fixed', actorId: 1 }, 'add', 4)).toEqual({
+      code: 313,
+      indent: 0,
+      parameters: [0, 1, 0, 4],
+    });
+    expect(changeState({ type: 'fixed', actorId: 1 }, 'remove', 4).parameters).toEqual([
+      0, 1, 1, 4,
+    ]);
+    // Real editor output: recover the whole party.
+    expect(recoverAll({ type: 'fixed', actorId: 0 })).toEqual({
+      code: 314,
+      indent: 0,
+      parameters: [0, 0],
     });
   });
 });
