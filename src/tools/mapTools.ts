@@ -1,9 +1,16 @@
 import { z } from 'zod';
-import { readJsonFile, getMapPath, getDataPath, fileExists } from '../utils/fileHandler.js';
+import {
+  readJsonFile,
+  readJsonArraySoft,
+  getMapPath,
+  getDataPath,
+  fileExists,
+} from '../utils/fileHandler.js';
 import { commitChange, commitDelete } from '../utils/commit.js';
-import { MapData, MapEvent, MapInfo, EventCommand, EventPage } from '../utils/types.js';
+import { MapData, MapEvent, MapInfo, EventCommand, EventPage, Encounter } from '../utils/types.js';
 import { ToolDefinition } from '../registry.js';
 import { validateEvent } from '../validation/eventCommands.js';
+import { refExists } from '../validation/references.js';
 
 /** Dimensions the RPG Maker MZ editor defaults to when creating a new map. */
 const DEFAULT_MAP_WIDTH = 17;
@@ -386,6 +393,45 @@ export async function resizeMap(
 
   const result = { mapId, width, height, previousWidth, previousHeight };
   return warnings.length > 0 ? { ...result, warnings } : result;
+}
+
+/**
+ * Set a map's random-encounter list (and optionally its `encounterStep`, the
+ * average number of steps between encounters). Replaces `encounterList` wholesale
+ * with the given troops — each entry is `{ troopId, weight?, regionSet? }` where
+ * `weight` biases the random pick (editor default 5) and `regionSet` restricts the
+ * encounter to those map region ids (empty = anywhere). Every `troopId` is
+ * validated to exist in Troops.json (throws otherwise, matching create_troop's
+ * enemy check), so a bad troop can't sail through the way it does via update_map's
+ * raw field-poking. Writes through the commit choke point (dry-run/diff aware).
+ */
+export async function setEncounters(
+  projectPath: string,
+  mapId: number,
+  encounters: Array<{ troopId: number; weight?: number; regionSet?: number[] }>,
+  encounterStep?: number,
+): Promise<{ mapId: number; encounterList: Encounter[]; encounterStep: number }> {
+  const troops = await readJsonArraySoft(getDataPath(projectPath, 'Troops.json'));
+
+  const encounterList: Encounter[] = encounters.map((e, i) => {
+    // Skip the check only when Troops.json couldn't be loaded at all (fail-soft),
+    // so a real project always validates the troopId.
+    if (troops.length > 0 && !refExists(troops, e.troopId)) {
+      throw new Error(`Encounter ${i} references troopId ${e.troopId}, which does not exist`);
+    }
+    return {
+      troopId: e.troopId,
+      weight: e.weight ?? 5,
+      regionSet: e.regionSet ?? [],
+    };
+  });
+
+  const map = await getMap(projectPath, mapId);
+  map.encounterList = encounterList;
+  if (encounterStep !== undefined) map.encounterStep = encounterStep;
+
+  await commitChange(getMapPath(projectPath, mapId), map);
+  return { mapId, encounterList, encounterStep: map.encounterStep };
 }
 
 /**
@@ -850,6 +896,35 @@ export const mapToolDefinitions: ToolDefinition[] = [
       height: z.number().int().positive().describe('New height in tiles'),
     },
     handler: (ctx, args) => resizeMap(ctx.projectPath, args.mapId, args.width, args.height),
+  },
+  {
+    name: 'set_encounters',
+    mutates: true,
+    description:
+      "Set a map's random-encounter list (replaces it wholesale) and optionally its encounterStep (average steps between encounters). Each encounter is { troopId, weight?, regionSet? }: weight biases the random pick (default 5), regionSet restricts it to those map region ids (empty/omitted = anywhere). Every troopId is validated against Troops.json — a non-existent troop throws. Prefer this over update_map for encounters (it validates and hides the on-disk shape).",
+    inputSchema: {
+      mapId: z.number().describe('The ID of the map'),
+      encounters: z
+        .array(
+          z.object({
+            troopId: z.number().int().describe('Troop id from Troops.json'),
+            weight: z.number().int().optional().describe('Relative encounter weight (default 5)'),
+            regionSet: z
+              .array(z.number().int())
+              .optional()
+              .describe('Region ids this encounter is restricted to (empty = anywhere)'),
+          }),
+        )
+        .describe('The full encounter list to set (replaces any existing entries)'),
+      encounterStep: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe('Average number of steps between encounters (unchanged if omitted)'),
+    },
+    handler: (ctx, args) =>
+      setEncounters(ctx.projectPath, args.mapId, args.encounters, args.encounterStep),
   },
   {
     name: 'get_map_dimensions',
