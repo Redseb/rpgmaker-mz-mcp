@@ -72,12 +72,31 @@ describe('catalog tools with project-scoped catalogs (integration)', () => {
 
   it('omits the custom sheet when no project catalog exists', async () => {
     dir = await scaffold(false);
+    // Unfiltered call returns a per-sheet summary (not every entry).
     const res = (await getCatalog.handler({ projectPath: dir }, { tilesetId: 1 })) as {
-      entries: { sheet: string }[];
+      summary: boolean;
+      sheets: { sheet: string; count: number }[];
     };
     // World_A1 (built-in) resolves; Custom_A2 does not.
-    expect(res.entries.some((e) => e.sheet === 'World_A1')).toBe(true);
-    expect(res.entries.some((e) => e.sheet === 'Custom_A2')).toBe(false);
+    expect(res.summary).toBe(true);
+    expect(res.sheets.some((s) => s.sheet === 'World_A1')).toBe(true);
+    expect(res.sheets.some((s) => s.sheet === 'Custom_A2')).toBe(false);
+  });
+
+  it('an unfiltered call returns per-sheet counts only, no entries', async () => {
+    dir = await scaffold(true);
+    const res = (await getCatalog.handler({ projectPath: dir }, { tilesetId: 1 })) as {
+      summary: boolean;
+      totalEntries: number;
+      sheets: { sheet: string; role: string; source: string; count: number }[];
+      entries?: unknown;
+    };
+    expect(res.summary).toBe(true);
+    expect(res.entries).toBeUndefined();
+    const customA2 = res.sheets.find((s) => s.sheet === 'Custom_A2')!;
+    expect(customA2).toMatchObject({ role: 'A2', source: 'project', count: 2 });
+    // totalEntries is the sum of the per-sheet counts.
+    expect(res.totalEntries).toBe(res.sheets.reduce((n, s) => n + s.count, 0));
   });
 
   it('resolves custom-sheet names once a project catalog is present', async () => {

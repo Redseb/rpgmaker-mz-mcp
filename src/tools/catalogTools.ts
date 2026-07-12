@@ -83,22 +83,51 @@ export const catalogToolDefinitions: ToolDefinition[] = [
   {
     name: 'get_tile_catalog',
     description:
-      "Get the semantic tile catalog for a tileset: the named tiles (e.g. 'Grassland A', 'Forest', 'Sea') in each of its image sheets, each with its representative tile id and a `source` ('builtin' = RPG Maker's own labels; 'project' = a draft name from the vision-bootstrap skill). Project (custom-sheet) entries also carry the skill's `description`, `confidence` ('high'/'medium'/'low'), and `manual` (true = a human verified it) so you can gauge how trustworthy a draft name is. Autotile entries (A1–A4) return the kind's base tile id — feed it to a paint command, which recomputes the shape from neighbours. Covers the default Overworld tileset (World_A1/A2/B/C) plus any custom sheets cataloged into data/tilecatalog/ (via the tileset-catalog skill); still-uncovered sheets are omitted. Optionally restrict to one sheet by filename ('World_A2') or slot role ('A2'). Read-only.",
+      "Get the semantic tile catalog for a tileset: the named tiles (e.g. 'Grassland A', 'Forest', 'Sea') in each of its image sheets, each with its representative tile id and a `source` ('builtin' = RPG Maker's own labels; 'project' = a draft name from the vision-bootstrap skill). Project (custom-sheet) entries also carry the skill's `description`, `confidence` ('high'/'medium'/'low'), and `manual` (true = a human verified it) so you can gauge how trustworthy a draft name is. Autotile entries (A1–A4) return the kind's base tile id — feed it to a paint command, which recomputes the shape from neighbours. Covers the default Overworld tileset (World_A1/A2/B/C) plus any custom sheets cataloged into data/tilecatalog/ (via the tileset-catalog skill); still-uncovered sheets are omitted. **Called WITHOUT `sheet` it returns only a per-sheet index (name + entry count) to stay within the tool-output limit — a full tileset can hold thousands of named tiles. Pass `sheet` (filename 'World_A2' or slot role 'A2') to list one sheet's actual tile entries.** Read-only.",
     inputSchema: {
       tilesetId: z.number().int().positive().describe('Tileset id (from Tilesets.json / the map)'),
       sheet: z
         .string()
         .optional()
-        .describe("Optional: restrict to one sheet by filename ('World_A2') or role ('A2')"),
+        .describe(
+          "Restrict to one sheet by filename ('World_A2') or role ('A2'). Omit to get a per-sheet summary (counts only) instead of every entry.",
+        ),
     },
     handler: async (ctx, args) => {
       const tileset = await getTileset(ctx.projectPath, args.tilesetId);
       const overlay = await loadProjectCatalogs(ctx.projectPath);
+      const cataloged = hasCatalog(tileset.tilesetNames, overlay);
       const entries = catalogForTileset(tileset.tilesetNames, args.sheet, overlay);
+
+      // Without a `sheet` filter, the full entry list can blow past the tool-output
+      // token limit (a default tileset holds thousands of named tiles). Return a
+      // per-sheet index instead, so the caller can pick a sheet to expand.
+      if (!args.sheet) {
+        const bySheet = new Map<
+          string,
+          { sheet: string; role: string; source: string; count: number }
+        >();
+        for (const e of entries) {
+          const summary = bySheet.get(e.sheet);
+          if (summary) summary.count++;
+          else bySheet.set(e.sheet, { sheet: e.sheet, role: e.role, source: e.source, count: 1 });
+        }
+        return {
+          tilesetId: args.tilesetId,
+          tilesetName: tileset.name,
+          cataloged,
+          summary: true,
+          totalEntries: entries.length,
+          sheets: [...bySheet.values()],
+          hint: "Per-sheet index only. Call again with `sheet` (filename or role, e.g. 'A2') to list that sheet's tile entries.",
+        };
+      }
+
       return {
         tilesetId: args.tilesetId,
         tilesetName: tileset.name,
-        cataloged: hasCatalog(tileset.tilesetNames, overlay),
+        cataloged,
+        sheet: args.sheet,
         count: entries.length,
         entries,
       };
