@@ -64,6 +64,25 @@ async function characterNameWarnings(
   return [];
 }
 
+/**
+ * Warn (never block) when a `create_npc` call sets no graphic at all — an NPC
+ * whose whole purpose is to be a visible, talkable character is almost always a
+ * mistake when invisible (F1: the Signpost NPC was created with no sprite and was
+ * unfindable in-game). Scoped to `create_npc`: a bare `create_map_event` trigger
+ * or a door-tile transfer legitimately has no graphic, so this doesn't fire there.
+ */
+function missingGraphicWarnings(characterName: string | undefined): ValidationWarning[] {
+  if (characterName) return [];
+  return [
+    {
+      path: 'image.characterName',
+      code: undefined,
+      message:
+        'create_npc made an NPC with no graphic — it will be invisible in-game. Set a characterName from list_assets("characters"), or use create_map_event if you meant an invisible trigger/controller event.',
+    },
+  ];
+}
+
 /** The page-level properties `set_event_page` can change (all optional). */
 export interface EventPageUpdates {
   image?: Partial<EventImage>;
@@ -301,7 +320,7 @@ export const eventPageToolDefinitions: ToolDefinition[] = [
     name: 'create_npc',
     mutates: true,
     description:
-      'Create a complete, placed NPC event on a map in one call — a graphic + trigger + a talk list. Provide `text` (built into a Show Text sequence, with optional face/speaker) or an explicit `commands` array (commands wins if both given). Defaults to a solid, action-button NPC facing down. Warns (never blocks) on an unknown characterName. The one-shot "make a talking NPC that says X" primitive.',
+      'Create a complete, placed NPC event on a map in one call — a graphic + trigger + a talk list. Provide `text` (built into a Show Text sequence, with optional face/speaker) or an explicit `commands` array (commands wins if both given). Defaults to a solid, action-button NPC facing down. Warns (never blocks) on an unknown characterName, and on NO graphic at all (an NPC with no characterName is invisible in-game — use create_map_event for an intentionally-invisible trigger). The one-shot "make a talking NPC that says X" primitive.',
     inputSchema: {
       mapId: z.number().describe('The ID of the map to place the NPC on'),
       x: z.number().int().describe('X tile position'),
@@ -378,7 +397,10 @@ export const eventPageToolDefinitions: ToolDefinition[] = [
         args.name,
         options,
       );
-      const warnings = await characterNameWarnings(ctx.projectPath, args.characterName);
+      const warnings = [
+        ...missingGraphicWarnings(args.characterName),
+        ...(await characterNameWarnings(ctx.projectPath, args.characterName)),
+      ];
       return withValidation(event, warnings);
     },
   },

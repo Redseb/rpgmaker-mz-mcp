@@ -198,6 +198,24 @@ describe('create_npc (integration)', () => {
     expect(result.event.pages[0].image.characterName).toBe('NotReal');
   });
 
+  it('warns (never throws) when no graphic is set — an invisible NPC (F1)', async () => {
+    const result = (await get('create_npc').handler(
+      { projectPath: dir },
+      { mapId: 1, x: 1, y: 1, name: 'Signpost', text: ['Read me.'] },
+    )) as { event: MapEvent; warnings?: { path: string; message: string }[] };
+    expect(result.warnings?.some((w) => /invisible/.test(w.message))).toBe(true);
+    // Still created despite the warning.
+    expect(result.event.name).toBe('Signpost');
+  });
+
+  it('does NOT emit the no-graphic warning when a characterName is set', async () => {
+    const result = (await get('create_npc').handler(
+      { projectPath: dir },
+      { mapId: 1, x: 1, y: 1, name: 'Villager', characterName: 'People1', text: ['Hi'] },
+    )) as { event: MapEvent; warnings?: unknown[] };
+    expect(result.warnings).toBeUndefined();
+  });
+
   it('is marked as mutating', () => {
     expect(get('create_npc').mutates).toBe(true);
   });
