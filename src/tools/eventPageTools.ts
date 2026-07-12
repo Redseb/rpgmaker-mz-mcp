@@ -1,16 +1,9 @@
 import { z } from 'zod';
 import { readJsonFile, getMapPath } from '../utils/fileHandler.js';
 import { commitChange } from '../utils/commit.js';
-import {
-  MapData,
-  MapEvent,
-  EventPage,
-  EventImage,
-  MoveRoute,
-  EventCommand,
-} from '../utils/types.js';
+import { MapData, MapEvent, EventImage, MoveRoute, EventCommand } from '../utils/types.js';
 import { ToolDefinition } from '../registry.js';
-import { createMapEvent } from './mapTools.js';
+import { createMapEvent, blankEventPage } from './mapTools.js';
 import { validateEvent, ValidationWarning } from '../validation/eventCommands.js';
 import { showText, ShowTextOptions } from '../events/commandBuilders.js';
 import { listAssets } from './assetTools.js';
@@ -41,44 +34,10 @@ async function getMap(projectPath: string, mapId: number): Promise<MapData> {
   return await readJsonFile<MapData>(getMapPath(projectPath, mapId));
 }
 
-/**
- * Build a blank event page mirroring what the RPG Maker MZ editor writes for a
- * freshly-created event: no graphic, an empty (code-0-terminated) command list,
- * action-button trigger, priority below characters, and default movement. Field
- * values verified against the editor's own output. Kept pure so the template can
- * be unit-tested and reused by `create_npc`.
- */
-export function blankEventPage(): EventPage {
-  return {
-    conditions: {
-      actorId: 1,
-      actorValid: false,
-      itemId: 1,
-      itemValid: false,
-      selfSwitchCh: 'A',
-      selfSwitchValid: false,
-      switch1Id: 1,
-      switch1Valid: false,
-      switch2Id: 1,
-      switch2Valid: false,
-      variableId: 1,
-      variableValid: false,
-      variableValue: 0,
-    },
-    directionFix: false,
-    image: { characterName: '', characterIndex: 0, direction: 2, pattern: 0, tileId: 0 },
-    list: [{ code: 0, indent: 0, parameters: [] }],
-    moveFrequency: 3,
-    moveRoute: { list: [{ code: 0, parameters: [] }], repeat: true, skippable: false, wait: false },
-    moveSpeed: 3,
-    moveType: 0,
-    priorityType: 0,
-    stepAnime: false,
-    through: false,
-    trigger: 0,
-    walkAnime: true,
-  };
-}
+// `blankEventPage` now lives in mapTools (alongside createMapEvent and the other
+// event-page primitives) to keep the module dependency one-way; re-exported here
+// so existing importers of this module keep working.
+export { blankEventPage };
 
 /**
  * Warn (never throw) when a sprite `characterName` isn't among the project's

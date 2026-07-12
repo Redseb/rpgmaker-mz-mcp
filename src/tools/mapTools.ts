@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { readJsonFile, getMapPath, getDataPath, fileExists } from '../utils/fileHandler.js';
 import { commitChange, commitDelete } from '../utils/commit.js';
-import { MapData, MapEvent, MapInfo, EventCommand } from '../utils/types.js';
+import { MapData, MapEvent, MapInfo, EventCommand, EventPage } from '../utils/types.js';
 import { ToolDefinition } from '../registry.js';
 import { validateEvent } from '../validation/eventCommands.js';
 
@@ -336,12 +336,75 @@ export async function updateMapEvent(
 }
 
 /**
- * Create a new event on a map
+ * Build a blank event page mirroring what the RPG Maker MZ editor writes for a
+ * freshly-created event: no graphic, an empty (code-0-terminated) command list,
+ * action-button trigger, priority below characters, and default movement. Field
+ * values verified against the editor's own output. Pure so the template can be
+ * unit-tested and reused (by `create_npc` and `normalizeEventPage`).
+ */
+export function blankEventPage(): EventPage {
+  return {
+    conditions: {
+      actorId: 1,
+      actorValid: false,
+      itemId: 1,
+      itemValid: false,
+      selfSwitchCh: 'A',
+      selfSwitchValid: false,
+      switch1Id: 1,
+      switch1Valid: false,
+      switch2Id: 1,
+      switch2Valid: false,
+      variableId: 1,
+      variableValid: false,
+      variableValue: 0,
+    },
+    directionFix: false,
+    image: { characterName: '', characterIndex: 0, direction: 2, pattern: 0, tileId: 0 },
+    list: [{ code: 0, indent: 0, parameters: [] }],
+    moveFrequency: 3,
+    moveRoute: { list: [{ code: 0, parameters: [] }], repeat: true, skippable: false, wait: false },
+    moveSpeed: 3,
+    moveType: 0,
+    priorityType: 0,
+    stepAnime: false,
+    through: false,
+    trigger: 0,
+    walkAnime: true,
+  };
+}
+
+/**
+ * Merge a partial event page onto a blank page so a caller can specify only the
+ * fields that differ from the editor's "New Event" default. Top-level fields
+ * overwrite; the nested `image` and `conditions` objects deep-merge (so passing
+ * just `image.characterName` keeps the other graphic defaults). `list` and
+ * `moveRoute`, when omitted, fall back to the blank page's (a valid code-0
+ * terminated list / route). A page passed in full round-trips unchanged, so this
+ * is safe for callers like `create_npc` that already build a complete page.
+ */
+export function normalizeEventPage(partial: Partial<EventPage>): EventPage {
+  const blank = blankEventPage();
+  return {
+    ...blank,
+    ...partial,
+    conditions: { ...blank.conditions, ...(partial.conditions ?? {}) },
+    image: { ...blank.image, ...(partial.image ?? {}) },
+    list: partial.list ?? blank.list,
+    moveRoute: partial.moveRoute ?? blank.moveRoute,
+  };
+}
+
+/**
+ * Create a new event on a map. Each supplied page is merged onto a blank page
+ * (see {@link normalizeEventPage}), so a caller can pass a partial page — only the
+ * fields that differ from the editor's "New Event" default — without needing the
+ * full RPG Maker page schema. An event with no pages gets one blank page.
  */
 export async function createMapEvent(
   projectPath: string,
   mapId: number,
-  eventData: Omit<MapEvent, 'id'>,
+  eventData: Omit<MapEvent, 'id' | 'pages'> & { pages?: Partial<EventPage>[] },
 ): Promise<MapEvent> {
   const map = await getMap(projectPath, mapId);
 
@@ -350,9 +413,13 @@ export async function createMapEvent(
     return event && index > max ? index : max;
   }, 0);
 
+  const suppliedPages = eventData.pages ?? [];
+  const pages = suppliedPages.length ? suppliedPages.map(normalizeEventPage) : [blankEventPage()];
+
   // Spread first so the computed id always wins, even if a caller passes one.
   const newEvent: MapEvent = {
     ...eventData,
+    pages,
     id: maxId + 1,
   };
 
@@ -598,19 +665,29 @@ export const mapToolDefinitions: ToolDefinition[] = [
   {
     name: 'create_map_event',
     mutates: true,
-    description: 'Create a new event on a map',
+    description:
+      'Create a new event on a map. Each page is merged onto a blank "New Event" page (trigger 0 action-button, priority 0 below characters, no graphic, empty command list, standing move type), so you only supply the fields that differ — pass e.g. `{ image: { characterName: \'Actor1\', characterIndex: 0 }, trigger: 3, list: [...] }` and the rest is filled in. Nested `image`/`conditions` deep-merge; an omitted `list` becomes a valid empty (code-0-terminated) list. Omit `pages` entirely for a bare one-page event. For the common "talking NPC" case prefer create_npc. Page fields: `image` { characterName, characterIndex, direction (2 down/4 left/6 right/8 up), pattern, tileId }, `trigger` (0 action-button/1 player-touch/2 event-touch/3 autorun/4 parallel), `priorityType` (0 below/1 same/2 above), `moveType` (0 fixed/1 random/2 approach/3 custom), `conditions`, `list`.',
     inputSchema: {
       mapId: z.number().describe('The ID of the map'),
       name: z.string().describe('Event name'),
       x: z.number().describe('X tile position'),
       y: z.number().describe('Y tile position'),
       note: z.string().optional().describe('Event note field'),
-      pages: z.array(z.unknown()).describe('Event pages (conditions, image, command list, etc.)'),
+      pages: z
+        .array(z.record(z.string(), z.unknown()))
+        .optional()
+        .describe(
+          'Event pages; each is merged onto a blank page so you can pass only the differing fields. Omit for one blank page.',
+        ),
     },
     handler: async (ctx, args) => {
-      const { mapId, ...eventData } = args;
+      const { mapId, dryRun: _dryRun, ...eventData } = args;
       return withValidation(
-        await createMapEvent(ctx.projectPath, mapId, eventData as Omit<MapEvent, 'id'>),
+        await createMapEvent(
+          ctx.projectPath,
+          mapId,
+          eventData as Omit<MapEvent, 'id' | 'pages'> & { pages?: Partial<EventPage>[] },
+        ),
       );
     },
   },
