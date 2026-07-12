@@ -97,8 +97,32 @@ describe('enemy tools (integration)', () => {
   it('the create_enemy tool handler dispatches to createEnemy', async () => {
     const def = battleToolDefinitions.find((t) => t.name === 'create_enemy')!;
     expect(def.mutates).toBe(true);
-    const result = (await def.handler({ projectPath: dir }, { name: 'ViaTool' })) as Enemy;
-    expect(result.id).toBe(2);
+    const result = (await def.handler({ projectPath: dir }, { name: 'ViaTool' })) as {
+      enemy: Enemy;
+      warnings?: unknown[];
+    };
+    expect(result.enemy.id).toBe(2);
+    // No enemies asset dir in the fixture → the battler check is skipped (no false positive).
+    expect(result.warnings).toBeUndefined();
+  });
+
+  it('create_enemy warns on an unknown battlerName when the asset dir has entries', async () => {
+    // Seed an img/enemies dir with one real battler so the check can run.
+    await mkdir(join(dir, 'img', 'enemies'), { recursive: true });
+    await writeFile(join(dir, 'img', 'enemies', 'Bat.png'), '');
+    const def = battleToolDefinitions.find((t) => t.name === 'create_enemy')!;
+    const result = (await def.handler(
+      { projectPath: dir },
+      { name: 'Ghost', battlerName: 'NoSuchSprite' },
+    )) as { enemy: Enemy; warnings?: { path: string }[] };
+    expect(result.warnings?.some((w) => w.path === 'battlerName')).toBe(true);
+
+    // A battlerName that DOES exist produces no warning.
+    const ok = (await def.handler(
+      { projectPath: dir },
+      { name: 'RealBat', battlerName: 'Bat' },
+    )) as { enemy: Enemy; warnings?: unknown[] };
+    expect(ok.warnings).toBeUndefined();
   });
 });
 

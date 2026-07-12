@@ -4,6 +4,7 @@ import { commitChange } from '../utils/commit.js';
 import { Enemy, Troop, TroopMember, TroopPage } from '../utils/types.js';
 import { ToolDefinition } from '../registry.js';
 import { validateCommandList, ValidationWarning } from '../validation/eventCommands.js';
+import { listAssets } from './assetTools.js';
 
 /**
  * Drop keys whose value is `undefined` so a caller's omitted optional field can't
@@ -77,6 +78,41 @@ function withTroopValidation(troop: Troop): { troop: Troop; warnings?: Validatio
     });
   }
   return warnings.length > 0 ? { troop, warnings } : { troop };
+}
+
+/**
+ * Warn (never throw) when an enemy's `battlerName` isn't among the project's
+ * `img/enemies` assets — a wrong battler filename is a silent runtime failure (a
+ * blank/missing sprite in battle). Skips the check when the name is empty or the
+ * asset dir is empty/missing (nothing to validate against — e.g. a fixture), so it
+ * can't emit false positives. Mirrors `characterNameWarnings` (eventPageTools) and
+ * `audioNameWarnings` (eventCommandTools).
+ */
+async function battlerNameWarnings(
+  projectPath: string,
+  name: string | undefined,
+): Promise<ValidationWarning[]> {
+  if (!projectPath || !name) return [];
+  const { names } = await listAssets(projectPath, 'enemies');
+  if (names.length > 0 && !names.includes(name)) {
+    return [
+      {
+        path: 'battlerName',
+        code: undefined,
+        message: `battler "${name}" is not a known enemies asset (a wrong filename shows a blank sprite in battle)`,
+      },
+    ];
+  }
+  return [];
+}
+
+/** Attach warn-by-default battler-asset validation to an enemy-write response. */
+async function withEnemyAssetWarnings(
+  projectPath: string,
+  enemy: Enemy,
+): Promise<{ enemy: Enemy; warnings?: ValidationWarning[] }> {
+  const warnings = await battlerNameWarnings(projectPath, enemy.battlerName);
+  return warnings.length > 0 ? { enemy, warnings } : { enemy };
 }
 
 // --- Enemies ---------------------------------------------------------------
@@ -234,7 +270,7 @@ export const battleToolDefinitions: ToolDefinition[] = [
     name: 'create_enemy',
     mutates: true,
     description:
-      "Create a new enemy in data/Enemies.json. Only `name` is required; omitted fields use the editor's new-enemy defaults (100 HP, one Attack action, no drops). Allocates and returns the next unused enemy id. NOTE: an enemy with no Hit Rate trait (xparam id 0: trait { code: 22, dataId: 0, value: 0.95 }) always misses physical actions — pass one in `traits` if the enemy should land basic attacks.",
+      "Create a new enemy in data/Enemies.json. Only `name` is required; omitted fields use the editor's new-enemy defaults (100 HP, one Attack action, no drops). Allocates the next unused enemy id and returns `{ enemy, warnings? }` (warn-by-default: a `battlerName` not found in img/enemies is flagged, never blocked). NOTE: an enemy with no Hit Rate trait (xparam id 0: trait { code: 22, dataId: 0, value: 0.95 }) always misses physical actions — pass one in `traits` if the enemy should land basic attacks.",
     inputSchema: {
       name: z.string().describe('Enemy name shown in battle and the database'),
       battlerName: z.string().optional().describe('Battler graphic filename (img/enemies)'),
@@ -259,22 +295,28 @@ export const battleToolDefinitions: ToolDefinition[] = [
           'Action patterns { skillId, conditionType, conditionParam1, conditionParam2, rating }',
         ),
     },
-    handler: (ctx, args) => {
+    handler: async (ctx, args) => {
       const { dryRun: _dryRun, ...overrides } = args;
-      return createEnemy(ctx.projectPath, overrides as Partial<Omit<Enemy, 'id'>>);
+      const enemy = await createEnemy(ctx.projectPath, overrides as Partial<Omit<Enemy, 'id'>>);
+      return withEnemyAssetWarnings(ctx.projectPath, enemy);
     },
   },
   {
     name: 'update_enemy',
     mutates: true,
-    description: "Update an enemy's properties (shallow merge into the existing record)",
+    description:
+      "Update an enemy's properties (shallow merge into the existing record). Returns `{ enemy, warnings? }` — a `battlerName` not found in img/enemies is flagged warn-by-default.",
     inputSchema: {
       enemyId: z.number().describe('The ID of the enemy to update'),
       updates: z
         .record(z.string(), z.unknown())
         .describe('Object containing enemy properties to update'),
     },
-    handler: (ctx, args) => updateEnemy(ctx.projectPath, args.enemyId, args.updates),
+    handler: async (ctx, args) =>
+      withEnemyAssetWarnings(
+        ctx.projectPath,
+        await updateEnemy(ctx.projectPath, args.enemyId, args.updates),
+      ),
   },
   {
     name: 'get_troops',
