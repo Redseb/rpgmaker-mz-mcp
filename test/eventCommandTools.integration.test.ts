@@ -326,3 +326,109 @@ describe('insert_event_commands (integration)', () => {
     expect(get('insert_event_commands').mutates).toBe(true);
   });
 });
+
+describe('append_event_commands (integration)', () => {
+  let dir: string;
+
+  /** Scaffold a project seeded with one common event and one troop (single page). */
+  async function scaffoldWithCeAndTroop(): Promise<string> {
+    const d = await mkdtemp(join(tmpdir(), 'rpgmz-append-'));
+    await writeFile(join(d, 'game.rmmzproject'), 'RPGMZ 1.0.0');
+    await mkdir(join(d, 'data'));
+    await writeFile(join(d, 'data', 'System.json'), '{}');
+    await writeFile(
+      join(d, 'data', 'CommonEvents.json'),
+      JSON.stringify([
+        null,
+        {
+          id: 1,
+          name: 'Rest',
+          list: [{ code: 0, indent: 0, parameters: [] }],
+          switchId: 1,
+          trigger: 0,
+        },
+      ]),
+    );
+    await writeFile(
+      join(d, 'data', 'Troops.json'),
+      JSON.stringify([
+        null,
+        {
+          id: 1,
+          name: 'Ambush',
+          members: [],
+          pages: [{ conditions: {}, list: [{ code: 0, indent: 0, parameters: [] }], span: 0 }],
+        },
+      ]),
+    );
+    return d;
+  }
+
+  beforeEach(async () => {
+    dir = await scaffoldWithCeAndTroop();
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('inserts a built sequence into a common event body before its end marker', async () => {
+    const commands = showText(['Resting...'], { speakerName: 'Inn' });
+    const result = (await get('append_event_commands').handler(
+      { projectPath: dir },
+      { target: 'common_event', commonEventId: 1, commands },
+    )) as { target: string; id: number; list: EventCommand[]; warnings?: unknown[] };
+    expect(result.target).toBe('common_event');
+    expect(result.list.map((c) => c.code)).toEqual([101, 401, 0]);
+    expect(result.warnings).toBeUndefined();
+
+    const raw = await readFile(join(dir, 'data', 'CommonEvents.json'), 'utf-8');
+    expect(raw).not.toContain('\n');
+    const ces = JSON.parse(raw) as Array<{ list: EventCommand[] } | null>;
+    expect(ces[1]!.list.map((c) => c.code)).toEqual([101, 401, 0]);
+  });
+
+  it('inserts into a troop battle-event page', async () => {
+    const commands = showText(['They ambush you!']);
+    const result = (await get('append_event_commands').handler(
+      { projectPath: dir },
+      { target: 'troop_page', troopId: 1, pageIndex: 0, commands },
+    )) as { target: string; list: EventCommand[] };
+    expect(result.target).toBe('troop_page');
+    expect(result.list.map((c) => c.code)).toEqual([101, 401, 0]);
+  });
+
+  it('throws on a missing target or missing required target fields', async () => {
+    const h = get('append_event_commands').handler;
+    await expect(
+      h({ projectPath: dir }, { target: 'common_event', commonEventId: 99, commands: [] }),
+    ).rejects.toThrow(/Common event 99/);
+    await expect(
+      h({ projectPath: dir }, { target: 'troop_page', troopId: 1, pageIndex: 5, commands: [] }),
+    ).rejects.toThrow(/Page 5/);
+    await expect(h({ projectPath: dir }, { target: 'common_event', commands: [] })).rejects.toThrow(
+      /commonEventId is required/,
+    );
+  });
+
+  it('dry-run previews the common-event write without touching disk', async () => {
+    const context: CommitContext = { dryRun: true, commits: [] };
+    await commitStore.run(context, async () => {
+      await get('append_event_commands').handler(
+        { projectPath: dir },
+        { target: 'common_event', commonEventId: 1, commands: showText(['hi']) },
+      );
+    });
+    expect(context.commits.some((c) => c.path.endsWith('CommonEvents.json'))).toBe(true);
+    const ces = JSON.parse(
+      await readFile(join(dir, 'data', 'CommonEvents.json'), 'utf-8'),
+    ) as Array<{
+      list: EventCommand[];
+    } | null>;
+    expect(ces[1]!.list.map((c) => c.code)).toEqual([0]); // untouched
+  });
+
+  it('is marked as mutating', () => {
+    expect(get('append_event_commands').mutates).toBe(true);
+  });
+});

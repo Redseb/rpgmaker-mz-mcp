@@ -1,9 +1,15 @@
 import { z } from 'zod';
-import { readJsonFile, getMapPath } from '../utils/fileHandler.js';
+import { readJsonFile, getMapPath, getDataPath } from '../utils/fileHandler.js';
 import { commitChange } from '../utils/commit.js';
 import { MapData, MapEvent, EventCommand } from '../utils/types.js';
 import { ToolDefinition } from '../registry.js';
-import { validateEvent, ValidationWarning } from '../validation/eventCommands.js';
+import {
+  validateEvent,
+  validateCommandList,
+  ValidationWarning,
+} from '../validation/eventCommands.js';
+import { getCommonEvents } from './commonEventTools.js';
+import { getTroops } from './battleTools.js';
 import {
   showText,
   showChoices,
@@ -117,16 +123,77 @@ export async function insertEventCommands(
   if (!event.pages[pageIndex]) {
     throw new Error(`Page ${pageIndex} not found on event ${eventId}`);
   }
-  const commandList = event.pages[pageIndex].list;
-
-  const insertAt =
-    position !== undefined && position >= 0 && position < commandList.length - 1
-      ? position
-      : commandList.length - 1; // before the end-of-list command (code 0)
-  commandList.splice(insertAt, 0, ...commands);
+  spliceIntoList(event.pages[pageIndex].list, commands, position);
 
   await commitChange(getMapPath(projectPath, mapId), map);
   return event;
+}
+
+/**
+ * Splice built commands into a command list before its code-0 end marker (or at
+ * `position` when it's a valid in-range index). Shared by every insert path so
+ * the "insert before the terminator" rule lives in one place.
+ */
+function spliceIntoList(list: EventCommand[], commands: EventCommand[], position?: number): void {
+  const insertAt =
+    position !== undefined && position >= 0 && position < list.length - 1
+      ? position
+      : list.length - 1; // before the end-of-list command (code 0)
+  list.splice(insertAt, 0, ...commands);
+}
+
+/**
+ * Insert a pre-built command sequence into a COMMON EVENT body or a TROOP
+ * battle-event page — the builder→insert path for the two command lists that
+ * aren't map event pages (P2-7). Both reuse the map-page EventCommand format, so
+ * `validateCommandList` applies directly. Splices before the list's code-0 end
+ * marker (or at `position`) and writes through the commit choke point.
+ */
+export async function appendEventCommands(
+  projectPath: string,
+  target: 'common_event' | 'troop_page',
+  opts: {
+    commonEventId?: number;
+    troopId?: number;
+    pageIndex?: number;
+    commands: EventCommand[];
+    position?: number;
+  },
+): Promise<{ target: string; id: number; list: EventCommand[]; warnings?: ValidationWarning[] }> {
+  if (target === 'common_event') {
+    if (opts.commonEventId === undefined) {
+      throw new Error('commonEventId is required for target "common_event"');
+    }
+    const commonEvents = await getCommonEvents(projectPath);
+    const ce = commonEvents.find((c) => c && c.id === opts.commonEventId);
+    if (!ce) {
+      throw new Error(`Common event ${opts.commonEventId} does not exist`);
+    }
+    spliceIntoList(ce.list, opts.commands, opts.position);
+    await commitChange(getDataPath(projectPath, 'CommonEvents.json'), commonEvents);
+    const warnings = validateCommandList(ce.list, `common event ${ce.id}`);
+    const result = { target, id: ce.id, list: ce.list };
+    return warnings.length > 0 ? { ...result, warnings } : result;
+  }
+
+  // target === 'troop_page'
+  if (opts.troopId === undefined || opts.pageIndex === undefined) {
+    throw new Error('troopId and pageIndex are required for target "troop_page"');
+  }
+  const troops = await getTroops(projectPath);
+  const troop = troops.find((t) => t && t.id === opts.troopId);
+  if (!troop) {
+    throw new Error(`Troop ${opts.troopId} does not exist`);
+  }
+  const page = troop.pages[opts.pageIndex];
+  if (!page) {
+    throw new Error(`Page ${opts.pageIndex} not found on troop ${opts.troopId}`);
+  }
+  spliceIntoList(page.list, opts.commands, opts.position);
+  await commitChange(getDataPath(projectPath, 'Troops.json'), troops);
+  const warnings = validateCommandList(page.list, `troop ${troop.id} / page ${opts.pageIndex}`);
+  const result = { target, id: troop.id, list: page.list };
+  return warnings.length > 0 ? { ...result, warnings } : result;
 }
 
 /** Build the warn-by-default response for a mutating event write. */
@@ -946,5 +1013,37 @@ export const eventCommandToolDefinitions: ToolDefinition[] = [
       );
       return withValidation(event);
     },
+  },
+  {
+    name: 'append_event_commands',
+    mutates: true,
+    description:
+      'Insert a pre-built command sequence (from the build_* builders) into a COMMON EVENT body or a TROOP battle-event page — the insert path for the two command lists that are NOT map event pages (use insert_event_commands for those). Splices before the list end marker (or at `position`). target "common_event" needs commonEventId; target "troop_page" needs troopId + pageIndex. Returns warn-by-default validation of the resulting list.',
+    inputSchema: {
+      target: z.enum(['common_event', 'troop_page']).describe('Which command list to insert into'),
+      commonEventId: z
+        .number()
+        .int()
+        .optional()
+        .describe('target "common_event": the common event id'),
+      troopId: z.number().int().optional().describe('target "troop_page": the troop id'),
+      pageIndex: z
+        .number()
+        .int()
+        .optional()
+        .describe('target "troop_page": zero-based battle-event page index'),
+      commands: z
+        .array(eventCommandShape)
+        .describe('The event commands to insert (e.g. the `commands` from a build_* tool)'),
+      position: z.number().optional().describe('Insertion index; defaults to the end of the list'),
+    },
+    handler: (ctx, args) =>
+      appendEventCommands(ctx.projectPath, args.target, {
+        commonEventId: args.commonEventId,
+        troopId: args.troopId,
+        pageIndex: args.pageIndex,
+        commands: asCommands(args.commands),
+        position: args.position,
+      }),
   },
 ];
