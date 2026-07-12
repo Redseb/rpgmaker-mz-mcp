@@ -136,10 +136,14 @@ export const catalogToolDefinitions: ToolDefinition[] = [
   {
     name: 'find_tile',
     description:
-      "Find tiles in a tileset by name (case-insensitive substring) — the bridge from a meaning like 'grass', 'water', or 'mountain' to a paintable tile id. Returns matching catalog entries (name, sheet, tile id, autotile kind, `source`, plus `description`/`confidence`/`manual` for project catalog drafts). Covers the default Overworld tileset plus custom sheets cataloged into data/tilecatalog/ (via the tileset-catalog skill). Read-only.",
+      "Find tiles in a tileset by a case-insensitive SUBSTRING match on their catalog name — a quick bridge from a name fragment like 'grass' or 'forest' to a paintable tile id. This is a literal substring match, NOT synonym/semantic search: 'water' matches 'Endless Waterfall' but not 'Sea' or 'Pond' (their names lack the substring). To browse the actual tile names first, use get_tile_catalog with a `sheet` filter, then search a fragment you see. Returns matching catalog entries (name, sheet, tile id, autotile kind, `source`, plus `description`/`confidence`/`manual` for project catalog drafts). Covers the default Overworld tileset plus custom sheets cataloged into data/tilecatalog/ (via the tileset-catalog skill). Read-only.",
     inputSchema: {
       tilesetId: z.number().int().positive().describe('Tileset id (from Tilesets.json / the map)'),
-      query: z.string().describe("Name substring to search for, e.g. 'grass' or 'forest'"),
+      query: z
+        .string()
+        .describe(
+          "Name substring to match, e.g. 'grass' or 'forest' (literal substring, no synonyms)",
+        ),
     },
     handler: async (ctx, args) => {
       const tileset = await getTileset(ctx.projectPath, args.tilesetId);
