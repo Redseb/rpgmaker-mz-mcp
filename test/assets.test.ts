@@ -29,7 +29,10 @@ function assetsFrom(over: Record<string, string[]>): AvailableAssets {
 describe('checkAssets — records', () => {
   it('flags an enemy battlerName with no matching file (the Mudcrab case)', () => {
     const data = emptyData({
-      enemies: [null, { id: 1, battlerName: 'Mudcrab' } as unknown as AssetProjectData['enemies'][0]],
+      enemies: [
+        null,
+        { id: 1, battlerName: 'Mudcrab' } as unknown as AssetProjectData['enemies'][0],
+      ],
     });
     const warnings = checkAssets(data, assetsFrom({ enemies: ['Bat', 'Slime'] }));
     expect(warnings).toContainEqual(
@@ -66,14 +69,25 @@ describe('checkAssets — records', () => {
 
   it('skips a blank name (no asset set)', () => {
     const data = emptyData({
-      actors: [null, { id: 1, characterName: '', faceName: '', battlerName: '' } as unknown as AssetProjectData['actors'][0]],
+      actors: [
+        null,
+        {
+          id: 1,
+          characterName: '',
+          faceName: '',
+          battlerName: '',
+        } as unknown as AssetProjectData['actors'][0],
+      ],
     });
     expect(checkAssets(data, assetsFrom({ characters: ['Hero'] }))).toEqual([]);
   });
 
   it('skips a type whose directory is empty/unverifiable (never false-positives)', () => {
     const data = emptyData({
-      enemies: [null, { id: 1, battlerName: 'Mudcrab' } as unknown as AssetProjectData['enemies'][0]],
+      enemies: [
+        null,
+        { id: 1, battlerName: 'Mudcrab' } as unknown as AssetProjectData['enemies'][0],
+      ],
     });
     // enemies not present in the available map at all -> can't verify -> no warning.
     expect(checkAssets(data, assetsFrom({ characters: ['Hero'] }))).toEqual([]);
@@ -85,7 +99,10 @@ describe('checkAssets — records', () => {
     const data = emptyData({
       tilesets: [
         null,
-        { id: 1, tilesetNames: ['World_A1', '', 'Ghost_A3', '', '', '', '', '', ''] } as unknown as AssetProjectData['tilesets'][0],
+        {
+          id: 1,
+          tilesetNames: ['World_A1', '', 'Ghost_A3', '', '', '', '', '', ''],
+        } as unknown as AssetProjectData['tilesets'][0],
       ],
     });
     const warnings = checkAssets(data, assetsFrom({ tilesets: ['World_A1', 'World_A2'] }));
@@ -111,7 +128,11 @@ describe('checkAssets — event commands', () => {
             {
               image: { characterName: '' },
               list: [
-                { code: 250, indent: 0, parameters: [{ name: 'Ghost', volume: 90, pitch: 100, pan: 0 }] },
+                {
+                  code: 250,
+                  indent: 0,
+                  parameters: [{ name: 'Ghost', volume: 90, pitch: 100, pan: 0 }],
+                },
                 { code: 0, indent: 0, parameters: [] },
               ],
             },
@@ -119,9 +140,15 @@ describe('checkAssets — event commands', () => {
         },
       ],
     } as unknown as AssetProjectData['maps'][0]['map'];
-    const warnings = checkAssets(emptyData({ maps: [{ id: 5, map }] }), assetsFrom({ se: ['Cursor', 'Decision'] }));
+    const warnings = checkAssets(
+      emptyData({ maps: [{ id: 5, map }] }),
+      assetsFrom({ se: ['Cursor', 'Decision'] }),
+    );
     expect(warnings).toContainEqual(
-      expect.objectContaining({ category: 'event-command', path: 'map 5 / event 3 / page 0 / command 0 (Play SE)' }),
+      expect.objectContaining({
+        category: 'event-command',
+        path: 'map 5 / event 3 / page 0 / command 0 (Play SE)',
+      }),
     );
   });
 });
@@ -155,6 +182,8 @@ describe('validate_assets tool (integration)', () => {
       warnings: Array<{ category: string; message: string }>;
     };
     expect(result.ok).toBe(false);
-    expect(result.warnings.some((w) => w.category === 'enemy' && /Mudcrab/.test(w.message))).toBe(true);
+    expect(result.warnings.some((w) => w.category === 'enemy' && /Mudcrab/.test(w.message))).toBe(
+      true,
+    );
   });
 });

@@ -147,7 +147,11 @@ function checkCommandList(
 }
 
 /** Actor sprite/face/side-view-battler filenames. */
-function checkActors(data: AssetProjectData, assets: AvailableAssets, warnings: AssetWarning[]): void {
+function checkActors(
+  data: AssetProjectData,
+  assets: AvailableAssets,
+  warnings: AssetWarning[],
+): void {
   data.actors.forEach((actor) => {
     if (!actor) return;
     checkAsset(assets, 'characters', actor.characterName, 'actor', `actor ${actor.id} / characterName`, warnings); // prettier-ignore
@@ -157,7 +161,11 @@ function checkActors(data: AssetProjectData, assets: AvailableAssets, warnings: 
 }
 
 /** Enemy battler filenames (the Mudcrab case). */
-function checkEnemies(data: AssetProjectData, assets: AvailableAssets, warnings: AssetWarning[]): void {
+function checkEnemies(
+  data: AssetProjectData,
+  assets: AvailableAssets,
+  warnings: AssetWarning[],
+): void {
   data.enemies.forEach((enemy) => {
     if (!enemy) return;
     checkAsset(assets, 'enemies', enemy.battlerName, 'enemy', `enemy ${enemy.id} / battlerName`, warnings); // prettier-ignore
@@ -165,7 +173,11 @@ function checkEnemies(data: AssetProjectData, assets: AvailableAssets, warnings:
 }
 
 /** Tileset image sheet filenames (the 9 tilesetNames slots). */
-function checkTilesets(data: AssetProjectData, assets: AvailableAssets, warnings: AssetWarning[]): void {
+function checkTilesets(
+  data: AssetProjectData,
+  assets: AvailableAssets,
+  warnings: AssetWarning[],
+): void {
   data.tilesets.forEach((tileset) => {
     if (!tileset || !Array.isArray(tileset.tilesetNames)) return;
     tileset.tilesetNames.forEach((name, slot) => {
@@ -175,7 +187,11 @@ function checkTilesets(data: AssetProjectData, assets: AvailableAssets, warnings
 }
 
 /** Map-level audio/images plus every event page graphic and command list. */
-function checkMaps(data: AssetProjectData, assets: AvailableAssets, warnings: AssetWarning[]): void {
+function checkMaps(
+  data: AssetProjectData,
+  assets: AvailableAssets,
+  warnings: AssetWarning[],
+): void {
   for (const { id, map } of data.maps) {
     const base = `map ${id}`;
     checkAsset(assets, 'bgm', map.bgm?.name, 'map', `${base} / bgm`, warnings);
@@ -196,7 +212,11 @@ function checkMaps(data: AssetProjectData, assets: AvailableAssets, warnings: As
 }
 
 /** Common-event and troop battle-event command lists. */
-function checkEventLists(data: AssetProjectData, assets: AvailableAssets, warnings: AssetWarning[]): void {
+function checkEventLists(
+  data: AssetProjectData,
+  assets: AvailableAssets,
+  warnings: AssetWarning[],
+): void {
   data.commonEvents.forEach((ce) => {
     if (ce) checkCommandList(ce.list, `common event ${ce.id}`, assets, warnings);
   });
@@ -209,13 +229,31 @@ function checkEventLists(data: AssetProjectData, assets: AvailableAssets, warnin
 }
 
 /** System title/battleback images, default battle audio, and vehicle graphics/bgm. */
-function checkSystem(data: AssetProjectData, assets: AvailableAssets, warnings: AssetWarning[]): void {
+function checkSystem(
+  data: AssetProjectData,
+  assets: AvailableAssets,
+  warnings: AssetWarning[],
+): void {
   const s = data.system;
   if (!s) return;
   checkAsset(assets, 'titles1', s.title1Name, 'system', 'System.title1Name', warnings);
   checkAsset(assets, 'titles2', s.title2Name, 'system', 'System.title2Name', warnings);
-  checkAsset(assets, 'battlebacks1', s.battleback1Name, 'system', 'System.battleback1Name', warnings);
-  checkAsset(assets, 'battlebacks2', s.battleback2Name, 'system', 'System.battleback2Name', warnings);
+  checkAsset(
+    assets,
+    'battlebacks1',
+    s.battleback1Name,
+    'system',
+    'System.battleback1Name',
+    warnings,
+  );
+  checkAsset(
+    assets,
+    'battlebacks2',
+    s.battleback2Name,
+    'system',
+    'System.battleback2Name',
+    warnings,
+  );
 
   const audio: Array<[keyof SystemData, string, string]> = [
     ['titleBgm', 'bgm', 'System.titleBgm'],
