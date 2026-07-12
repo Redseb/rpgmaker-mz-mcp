@@ -273,7 +273,9 @@ export async function updateMapTree(
 }
 
 /**
- * Update map properties
+ * Update map properties. Refuses a width/height change: those would desync the
+ * flat `data` tile array (sized `width*height*6`) without repadding it. Use
+ * {@link resizeMap} for that.
  */
 export async function updateMap(
   projectPath: string,
@@ -281,12 +283,109 @@ export async function updateMap(
   updates: Partial<MapData>,
 ): Promise<MapData> {
   const map = await getMap(projectPath, mapId);
+
+  // A width/height change here would NOT resize the tile `data` array, silently
+  // desyncing the grid — the engine reads tiles by (layer*height + y)*width + x,
+  // so a mismatched width/height reads garbage or out of bounds. Reject it (so
+  // it can't half-apply) and point at resize_map, which repads every z-layer.
+  if (
+    (updates.width !== undefined && updates.width !== map.width) ||
+    (updates.height !== undefined && updates.height !== map.height)
+  ) {
+    throw new Error(
+      'update_map cannot change a map width/height (it does not resize the tile data array). Use resize_map instead.',
+    );
+  }
+
   const updatedMap = { ...map, ...updates };
 
   const mapPath = getMapPath(projectPath, mapId);
   await commitChange(mapPath, updatedMap);
 
   return updatedMap;
+}
+
+/**
+ * Rebuild a map's flat tile `data` array for new dimensions, preserving each
+ * z-layer's tiles where the old and new grids overlap and zero-filling any
+ * newly-exposed cells (cropping when a dimension shrinks). RPG Maker MZ packs
+ * the 6 z-layers contiguously into one `width*height*6` array indexed by
+ * `(layer*height + y)*width + x`, so a plain width/height swap misaligns every
+ * layer — this copies cell-by-cell into a freshly-sized array. Pure (no I/O) so
+ * the repadding math can be unit-tested.
+ */
+export function resizeMapData(
+  oldData: number[],
+  oldWidth: number,
+  oldHeight: number,
+  newWidth: number,
+  newHeight: number,
+): number[] {
+  const LAYERS = 6;
+  const newData: number[] = new Array(newWidth * newHeight * LAYERS).fill(0);
+  const copyWidth = Math.min(oldWidth, newWidth);
+  const copyHeight = Math.min(oldHeight, newHeight);
+  for (let layer = 0; layer < LAYERS; layer++) {
+    for (let y = 0; y < copyHeight; y++) {
+      for (let x = 0; x < copyWidth; x++) {
+        const oldIndex = (layer * oldHeight + y) * oldWidth + x;
+        const newIndex = (layer * newHeight + y) * newWidth + x;
+        newData[newIndex] = oldData[oldIndex];
+      }
+    }
+  }
+  return newData;
+}
+
+/**
+ * Resize an existing map to new width/height, repadding every z-layer of its
+ * tile `data` array (see {@link resizeMapData}) so the grid stays in sync — the
+ * safe path `update_map` refuses. Existing tiles are kept where the grids
+ * overlap; shrinking crops the excess. Warns (warn-by-default, never blocks)
+ * about any event now left outside the new bounds so the caller can move or
+ * remove it. Writes through the commit choke point (dry-run/diff aware).
+ */
+export async function resizeMap(
+  projectPath: string,
+  mapId: number,
+  width: number,
+  height: number,
+): Promise<{
+  mapId: number;
+  width: number;
+  height: number;
+  previousWidth: number;
+  previousHeight: number;
+  warnings?: string[];
+}> {
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0) {
+    throw new Error(`Map dimensions must be positive integers (got ${width}x${height})`);
+  }
+
+  const map = await getMap(projectPath, mapId);
+  const previousWidth = map.width;
+  const previousHeight = map.height;
+
+  map.data = resizeMapData(map.data, previousWidth, previousHeight, width, height);
+  map.width = width;
+  map.height = height;
+
+  // Shrinking can leave events outside the new grid. They aren't deleted (the
+  // caller may want to reposition them), just flagged.
+  const warnings: string[] = [];
+  for (const event of map.events) {
+    if (event && (event.x >= width || event.y >= height)) {
+      warnings.push(
+        `Event ${event.id} "${event.name}" at (${event.x},${event.y}) is now outside the ${width}x${height} map bounds`,
+      );
+    }
+  }
+
+  const mapPath = getMapPath(projectPath, mapId);
+  await commitChange(mapPath, map);
+
+  const result = { mapId, width, height, previousWidth, previousHeight };
+  return warnings.length > 0 ? { ...result, warnings } : result;
 }
 
 /**
@@ -733,12 +832,24 @@ export const mapToolDefinitions: ToolDefinition[] = [
     name: 'update_map',
     mutates: true,
     description:
-      "Update a map's top-level properties (name, display name, dimensions, bgm, etc.). Does not repaint tiles.",
+      "Update a map's top-level properties (name, display name, bgm, encounters, etc.). Does not repaint tiles. Cannot change width/height (that would desync the tile data array) — use resize_map for that.",
     inputSchema: {
       mapId: z.number().describe('The ID of the map'),
       updates: z.record(z.string(), z.unknown()).describe('Partial MapData properties to merge'),
     },
     handler: (ctx, args) => updateMap(ctx.projectPath, args.mapId, args.updates),
+  },
+  {
+    name: 'resize_map',
+    mutates: true,
+    description:
+      "Resize a map to new width/height, safely repadding every z-layer of its tile data (existing tiles kept where the old and new grids overlap; new cells blank; shrinking crops). This is the ONLY safe way to change a map's dimensions — update_map refuses a width/height change because it would not resize the tile array. Warns about any event left outside the new bounds.",
+    inputSchema: {
+      mapId: z.number().describe('The ID of the map to resize'),
+      width: z.number().int().positive().describe('New width in tiles'),
+      height: z.number().int().positive().describe('New height in tiles'),
+    },
+    handler: (ctx, args) => resizeMap(ctx.projectPath, args.mapId, args.width, args.height),
   },
   {
     name: 'get_map_dimensions',
