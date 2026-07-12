@@ -5,6 +5,44 @@ import { Actor } from '../utils/types.js';
 import { ToolDefinition } from '../registry.js';
 
 /**
+ * Drop keys whose value is `undefined` so a caller's omitted optional field can't
+ * clobber a template default when spread over it.
+ */
+function definedOnly<T extends object>(obj: T): Partial<T> {
+  return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined)) as Partial<T>;
+}
+
+/**
+ * A blank actor mirroring what the RPG Maker MZ editor writes for a freshly-created
+ * actor (the "New Actor" shape from newdata/data/Actors.json): class 1, level 1-99,
+ * five empty equip slots, no traits, empty graphic/name fields. Pure so the template
+ * shape can be unit-tested.
+ *
+ * Every field is present — `create_actor` previously wrote only the fields a caller
+ * passed, so an actor made with just `name` was missing `equips`/`traits`/etc.
+ * entirely, which crashes the engine on load (Game_Actor reads `equips.length` and
+ * concats `traits` unconditionally). Field order mirrors the editor's on-disk shape.
+ */
+export function defaultActor(): Omit<Actor, 'id'> {
+  return {
+    name: '',
+    nickname: '',
+    classId: 1,
+    initialLevel: 1,
+    maxLevel: 99,
+    characterName: '',
+    characterIndex: 0,
+    faceName: '',
+    faceIndex: 0,
+    battlerName: '',
+    equips: [0, 0, 0, 0, 0],
+    traits: [],
+    note: '',
+    profile: '',
+  };
+}
+
+/**
  * Get all actors from the project
  */
 export async function getActors(projectPath: string): Promise<Actor[]> {
@@ -44,11 +82,14 @@ export async function updateActor(
 }
 
 /**
- * Create a new actor
+ * Create a new actor. Only `name` is required; any omitted field falls back to the
+ * editor's new-actor default (see {@link defaultActor}) so the record is always
+ * complete. Allocates the next unused id (max existing + 1) and writes through the
+ * commit choke point.
  */
 export async function createActor(
   projectPath: string,
-  actorData: Omit<Actor, 'id'>,
+  overrides: Partial<Omit<Actor, 'id'>>,
 ): Promise<Actor> {
   const actors = await getActors(projectPath);
 
@@ -57,9 +98,10 @@ export async function createActor(
     return actor && actor.id > max ? actor.id : max;
   }, 0);
 
-  // Spread first so the computed id always wins, even if a caller passes one.
+  // Template first, caller's defined fields next, computed id last so it always wins.
   const newActor: Actor = {
-    ...actorData,
+    ...defaultActor(),
+    ...definedOnly(overrides),
     id: maxId + 1,
   };
 
@@ -133,7 +175,8 @@ export const actorToolDefinitions: ToolDefinition[] = [
   {
     name: 'create_actor',
     mutates: true,
-    description: 'Create a new actor',
+    description:
+      "Create a new actor in data/Actors.json. Only `name` is required; omitted fields use the editor's new-actor defaults (class 1, level 1-99, five empty equip slots, no traits). Allocates and returns the next unused actor id.",
     inputSchema: {
       name: z.string(),
       nickname: z.string().optional(),
@@ -150,7 +193,10 @@ export const actorToolDefinitions: ToolDefinition[] = [
       equips: z.array(z.number()).optional(),
       note: z.string().optional(),
     },
-    handler: (ctx, args) => createActor(ctx.projectPath, args as Omit<Actor, 'id'>),
+    handler: (ctx, args) => {
+      const { dryRun: _dryRun, ...overrides } = args;
+      return createActor(ctx.projectPath, overrides as Partial<Omit<Actor, 'id'>>);
+    },
   },
   {
     name: 'search_actors',

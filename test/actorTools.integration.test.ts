@@ -6,6 +6,7 @@ import {
   createActor,
   getActors,
   searchActors,
+  defaultActor,
   actorToolDefinitions,
 } from '../src/tools/actorTools.js';
 import { Actor } from '../src/utils/types.js';
@@ -66,6 +67,19 @@ describe('actor tools (integration)', () => {
 
     const raw = await readFile(join(dir, 'data', 'Actors.json'), 'utf-8');
     expect(raw).not.toContain('\n');
+  });
+
+  it('createActor with only a name fills every field from the default template', async () => {
+    const created = await createActor(dir, { name: 'Solo' });
+    expect(created.id).toBe(2);
+
+    // The record must be complete key-for-key against the reference default actor
+    // (a missing equips/traits array crashes the engine on load).
+    const { id: _id, name: _name, ...rest } = created;
+    const { name: _dn, ...defaultRest } = defaultActor();
+    expect(rest).toEqual(defaultRest);
+    expect(created.equips).toEqual([0, 0, 0, 0, 0]);
+    expect(created.traits).toEqual([]);
   });
 
   it('searchActors matches by name and nickname, case-insensitively', async () => {
