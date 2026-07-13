@@ -162,6 +162,47 @@ export function validateCommand(command: EventCommand, path: string): Validation
   return warnings;
 }
 
+/** Message-window line budget in characters (default 816px window, 26px font). */
+const TEXT_LINE_LIMIT = 55;
+/** Same budget when a face graphic is shown — the face eats a third of the window. */
+const TEXT_LINE_LIMIT_WITH_FACE = 38;
+
+/** Display width of a message line: escape codes (\C[3], \N[1], \G, \\, …) cost nothing. */
+function visibleTextLength(line: string): number {
+  return line.replace(/\\[A-Z]+\[[^\]]*\]/gi, '').replace(/\\./g, '').length;
+}
+
+/**
+ * Warn (never block) on Show Text lines (401) too wide for the message window —
+ * RPG Maker MZ does **not** word-wrap, an over-long line is silently cut off at
+ * the window edge. Face-aware: a 101 setup with a face image shrinks the budget
+ * for the 401 lines that follow it. Exported so the read-only text builders can
+ * surface the same warning at build time (on fragments without a terminator).
+ */
+export function textLineWidthWarnings(list: EventCommand[], path: string): ValidationWarning[] {
+  const warnings: ValidationWarning[] = [];
+  let faceShown = false;
+
+  list.forEach((command, i) => {
+    if (!command || !Array.isArray(command.parameters)) return;
+    if (command.code === 101) {
+      faceShown = typeof command.parameters[0] === 'string' && command.parameters[0] !== '';
+    } else if (command.code === 401 && typeof command.parameters[0] === 'string') {
+      const limit = faceShown ? TEXT_LINE_LIMIT_WITH_FACE : TEXT_LINE_LIMIT;
+      const length = visibleTextLength(command.parameters[0]);
+      if (length > limit) {
+        warnings.push({
+          path: `${path} / command ${i}`,
+          code: 401,
+          message: `Show Text line is ${length} visible chars but the message window fits ~${limit}${faceShown ? ' with a face shown' : ''} — MZ does not word-wrap, the end will be cut off; split it into shorter 401 lines`,
+        });
+      }
+    }
+  });
+
+  return warnings;
+}
+
 /**
  * Validate an event command list (an event page's `list`). Checks that it is a
  * proper array terminated by the code-0 end marker, then validates each command.
@@ -184,6 +225,8 @@ export function validateCommandList(list: unknown, path: string): ValidationWarn
   list.forEach((command, i) => {
     warnings.push(...validateCommand(command as EventCommand, `${path} / command ${i}`));
   });
+
+  warnings.push(...textLineWidthWarnings(list as EventCommand[], path));
 
   return warnings;
 }

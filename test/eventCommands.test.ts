@@ -4,6 +4,7 @@ import {
   validateCommandList,
   validateEvent,
   validateEvents,
+  textLineWidthWarnings,
   KNOWN_COMMANDS,
 } from '../src/validation/eventCommands.js';
 import { EventCommand, MapEvent } from '../src/utils/types.js';
@@ -60,6 +61,45 @@ describe('validateCommandList', () => {
 
   it('warns when the list is not an array', () => {
     expect(validateCommandList('nope', 'p')[0].message).toMatch(/not an array/);
+  });
+});
+
+describe('textLineWidthWarnings', () => {
+  const setup = (face: string) => cmd(101, [face, 0, 0, 2, '']);
+  const line = (text: string) => cmd(401, [text]);
+
+  it('accepts lines within the no-face budget (~55 chars)', () => {
+    expect(textLineWidthWarnings([setup(''), line('a'.repeat(55))], 'p')).toEqual([]);
+  });
+
+  it('warns on a line too wide for the window (MZ does not wrap)', () => {
+    const warnings = textLineWidthWarnings([setup(''), line('a'.repeat(60))], 'p');
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({ code: 401 });
+    expect(warnings[0].message).toMatch(/does not word-wrap/);
+  });
+
+  it('shrinks the budget to ~38 chars while a face is shown', () => {
+    const forgiving = 'a'.repeat(45); // fine without a face, too wide with one
+    expect(textLineWidthWarnings([setup(''), line(forgiving)], 'p')).toEqual([]);
+    const warnings = textLineWidthWarnings([setup('Actor1'), line(forgiving)], 'p');
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].message).toMatch(/with a face shown/);
+  });
+
+  it('a later face-less 101 restores the full budget', () => {
+    const list = [setup('Actor1'), line('short'), setup(''), line('a'.repeat(50))];
+    expect(textLineWidthWarnings(list, 'p')).toEqual([]);
+  });
+
+  it('escape codes cost no display width', () => {
+    const decorated = '\\C[3]' + 'a'.repeat(50) + '\\C[0]\\G\\\\';
+    expect(textLineWidthWarnings([setup(''), line(decorated)], 'p')).toEqual([]);
+  });
+
+  it('surfaces through validateCommandList', () => {
+    const warnings = validateCommandList([setup(''), line('a'.repeat(60)), cmd(0)], 'p');
+    expect(warnings.some((w) => /cut off/.test(w.message))).toBe(true);
   });
 });
 

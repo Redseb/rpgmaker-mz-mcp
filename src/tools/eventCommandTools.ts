@@ -6,6 +6,7 @@ import { ToolDefinition } from '../registry.js';
 import {
   validateEvent,
   validateCommandList,
+  textLineWidthWarnings,
   ValidationWarning,
 } from '../validation/eventCommands.js';
 import { getCommonEvents } from './commonEventTools.js';
@@ -377,7 +378,7 @@ export const eventCommandToolDefinitions: ToolDefinition[] = [
   {
     name: 'build_show_text',
     description:
-      'Build a Show Text event-command sequence (101 setup + one 401 line per text line) for insertion via insert_event_commands. Supports face image (from list_assets("faces")), window background/position, and the MZ name-box speaker. Read-only: returns { commands }, writes nothing.',
+      'Build a Show Text event-command sequence (101 setup + one 401 line per text line) for insertion via insert_event_commands. Supports face image (from list_assets("faces")), window background/position, and the MZ name-box speaker. MZ does NOT word-wrap: keep each line under ~55 chars (~38 with a face) or it is cut off at the window edge (warned, never blocked). Read-only: returns { commands, warnings? }, writes nothing.',
     inputSchema: {
       lines: z.array(z.string()).describe('Message lines (one entry per visual line)'),
       faceName: z.string().optional().describe('Face image basename ("" = none, default)'),
@@ -402,7 +403,9 @@ export const eventCommandToolDefinitions: ToolDefinition[] = [
         speakerName: args.speakerName,
         indent: args.indent,
       };
-      return { commands: showText(args.lines as string[], options) };
+      const commands = showText(args.lines as string[], options);
+      const warnings = textLineWidthWarnings(commands, 'show_text');
+      return warnings.length > 0 ? { commands, warnings } : { commands };
     },
   },
   {

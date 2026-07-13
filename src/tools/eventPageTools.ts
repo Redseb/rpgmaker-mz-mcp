@@ -3,7 +3,7 @@ import { readJsonFile, getMapPath } from '../utils/fileHandler.js';
 import { commitChange } from '../utils/commit.js';
 import { MapData, MapEvent, EventImage, MoveRoute, EventCommand } from '../utils/types.js';
 import { ToolDefinition } from '../registry.js';
-import { createMapEvent, blankEventPage } from './mapTools.js';
+import { createMapEvent, blankEventPage, actionButtonReachabilityWarnings } from './mapTools.js';
 import { validateEvent, ValidationWarning } from '../validation/eventCommands.js';
 import { showText, ShowTextOptions } from '../events/commandBuilders.js';
 import { listAssets } from './assetTools.js';
@@ -400,6 +400,7 @@ export const eventPageToolDefinitions: ToolDefinition[] = [
       const warnings = [
         ...missingGraphicWarnings(args.characterName),
         ...(await characterNameWarnings(ctx.projectPath, args.characterName)),
+        ...(await actionButtonReachabilityWarnings(ctx.projectPath, args.mapId, event)),
       ];
       return withValidation(event, warnings);
     },

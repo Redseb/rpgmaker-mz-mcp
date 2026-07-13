@@ -87,12 +87,21 @@ them from** — not from walking onto the landmark.
 - **Make the landmark solid:** paint/`place_object` it, then if the tile isn't already
   blocked, `set_tile_flags(tilesetId, tileId, { passage: { down:false,... } },
 applyToAutotileKind)` — or check with `get_tile_flags`/`check_passability`.
+- **Action-button events only fire from facing when priority is `same`.** With
+  priority `below` (the blank-page default), an action-button event fires only when
+  the player is **standing on** its tile — so on an impassable tile (a `!Door` on a
+  wall, an invisible trigger on a solid landmark) it can **never fire at all**. Any
+  event the player activates by facing it — doors, entrance triggers on solid tiles,
+  signs — needs `priorityType: 1` / `priority: 'same'`. (`create_npc` defaults to
+  `same`; `create_map_event` pages default to `below` — set it explicitly.)
 - **Two valid transfer idioms:**
-  - **Action-button, facing the landmark:** put a `trigger: action_button` event on the
-    walkable tile _in front of_ the solid landmark; the player stands there and presses
-    to enter. Best for buildings/dungeon entrances.
-  - **Player-touch doormat:** an invisible `trigger: player_touch` transfer event on a
-    door/threshold tile the player steps onto. Fine for interior doors.
+  - **Action-button, facing the landmark:** put a `trigger: action_button`,
+    **priority `same`** event on the solid landmark tile (or the wall the door sits
+    on); the player faces it and presses to enter. Best for buildings/dungeon
+    entrances/doors.
+  - **Player-touch doormat:** an invisible `trigger: player_touch`, priority `below`
+    transfer event on a walkable door/threshold tile the player steps onto. Fine for
+    interior exits and map-edge gaps.
 - **Avoid** a `player_touch` transfer sitting _on_ a decorative marker tile you can walk
   onto — it works but reads wrong (you walk into the building to leave).
 - Build the transfer with `build_transfer_player(mapId, x, y, direction, fade)` →
@@ -105,6 +114,12 @@ applyToAutotileKind)` — or check with `get_tile_flags`/`check_passability`.
   `characterName` (a basename from `list_assets('characters')`) + `characterIndex`.
   Invisible is only correct for pure trigger/controller events (auto-run logic, doormat
   transfers).
+- **MZ does not word-wrap message text.** A Show Text line (401) longer than the
+  window is silently **cut off at the right edge**. Break the text into short lines
+  yourself: keep each line to **~55 characters** (or **~38 when a face graphic is
+  shown** — the face eats a third of the window), max 4 lines per message box; start
+  a new Show Text block for longer dialogue. Escape codes (`\C[n]`, `\N[n]`, …)
+  don't count toward the display width.
 - **One-shot events (chests, defeated bosses, one-time cutscenes) — two-page
   self-switch pattern:**
   - Page 1: does the thing (give item / battle / dialogue), then

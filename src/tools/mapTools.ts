@@ -7,9 +7,18 @@ import {
   fileExists,
 } from '../utils/fileHandler.js';
 import { commitChange, commitDelete } from '../utils/commit.js';
-import { MapData, MapEvent, MapInfo, EventCommand, EventPage, Encounter } from '../utils/types.js';
+import {
+  MapData,
+  MapEvent,
+  MapInfo,
+  EventCommand,
+  EventPage,
+  Encounter,
+  Tileset,
+} from '../utils/types.js';
 import { ToolDefinition } from '../registry.js';
-import { validateEvent } from '../validation/eventCommands.js';
+import { validateEvent, ValidationWarning } from '../validation/eventCommands.js';
+import { layeredPassability } from '../tiles/tileFlags.js';
 import { refExists } from '../validation/references.js';
 
 /** Dimensions the RPG Maker MZ editor defaults to when creating a new map. */
@@ -28,6 +37,48 @@ function withValidation(event: MapEvent): {
 } {
   const { warnings } = validateEvent(event);
   return warnings.length > 0 ? { event, warnings } : { event };
+}
+
+/**
+ * Warn (never throw) when an event has an action-button page drawn with priority
+ * "below characters" (0) while the event's tile is impassable. Such a page fires
+ * only when the player STANDS ON the tile — impossible on a blocked cell — so the
+ * event (a !Door on a wall, an entrance trigger on a solid landmark) can never
+ * fire at all. Priority "same as characters" (1) triggers from facing, which is
+ * what these events want. Fails soft on any read problem (e.g. a bare fixture).
+ */
+export async function actionButtonReachabilityWarnings(
+  projectPath: string,
+  mapId: number,
+  event: MapEvent,
+): Promise<ValidationWarning[]> {
+  const affected = (event.pages ?? []).some(
+    (p) => p && p.trigger === 0 && p.priorityType === 0 && (p.list?.length ?? 0) > 1,
+  );
+  if (!affected) return [];
+  try {
+    const map = await getMap(projectPath, mapId);
+    const tilesets = await readJsonFile<(Tileset | null)[]>(
+      getDataPath(projectPath, 'Tilesets.json'),
+    );
+    const tileset = tilesets.find((t) => t && t.id === map.tilesetId);
+    if (!tileset) return [];
+    const stackFlags: number[] = [];
+    for (let z = 3; z >= 0; z--) {
+      const tileId = map.data[tileIndex(map.width, map.height, event.x, event.y, z)] || 0;
+      stackFlags.push(tileset.flags[tileId] ?? 0);
+    }
+    const passable = layeredPassability(stackFlags);
+    if (passable.down || passable.left || passable.right || passable.up) return [];
+  } catch {
+    return [];
+  }
+  return [
+    {
+      path: 'pages',
+      message: `action-button page with priority "below characters" sits on an impassable tile (${event.x}, ${event.y}) — it only fires when the player stands on it, which is impossible there, so it can never trigger; use priorityType 1 (same as characters) so it fires from facing (doors, entrances, signs)`,
+    },
+  ];
 }
 
 /**
@@ -810,14 +861,20 @@ export const mapToolDefinitions: ToolDefinition[] = [
         .record(z.string(), z.unknown())
         .describe('Object containing event properties to update'),
     },
-    handler: async (ctx, args) =>
-      withValidation(await updateMapEvent(ctx.projectPath, args.mapId, args.eventId, args.updates)),
+    handler: async (ctx, args) => {
+      const event = await updateMapEvent(ctx.projectPath, args.mapId, args.eventId, args.updates);
+      const result = withValidation(event);
+      const reach = await actionButtonReachabilityWarnings(ctx.projectPath, args.mapId, event);
+      return reach.length > 0
+        ? { ...result, warnings: [...(result.warnings ?? []), ...reach] }
+        : result;
+    },
   },
   {
     name: 'create_map_event',
     mutates: true,
     description:
-      'Create a new event on a map. Each page is merged onto a blank "New Event" page (trigger 0 action-button, priority 0 below characters, no graphic, empty command list, standing move type), so you only supply the fields that differ — pass e.g. `{ image: { characterName: \'Actor1\', characterIndex: 0 }, trigger: 3, list: [...] }` and the rest is filled in. Nested `image`/`conditions` deep-merge; an omitted `list` becomes a valid empty (code-0-terminated) list. Omit `pages` entirely for a bare one-page event. For the common "talking NPC" case prefer create_npc. Page fields: `image` { characterName, characterIndex, direction (2 down/4 left/6 right/8 up), pattern, tileId }, `trigger` (0 action-button/1 player-touch/2 event-touch/3 autorun/4 parallel), `priorityType` (0 below/1 same/2 above), `moveType` (0 fixed/1 random/2 approach/3 custom), `conditions`, `list`.',
+      'Create a new event on a map. Each page is merged onto a blank "New Event" page (trigger 0 action-button, priority 0 below characters, no graphic, empty command list, standing move type), so you only supply the fields that differ — pass e.g. `{ image: { characterName: \'Actor1\', characterIndex: 0 }, trigger: 3, list: [...] }` and the rest is filled in. Nested `image`/`conditions` deep-merge; an omitted `list` becomes a valid empty (code-0-terminated) list. Omit `pages` entirely for a bare one-page event. For the common "talking NPC" case prefer create_npc. An action-button page meant to fire from facing (doors, entrances, signs) needs `priorityType: 1` — with the default 0 (below) it only fires when stood on, so on an impassable tile it can never trigger (warned). Page fields: `image` { characterName, characterIndex, direction (2 down/4 left/6 right/8 up), pattern, tileId }, `trigger` (0 action-button/1 player-touch/2 event-touch/3 autorun/4 parallel), `priorityType` (0 below/1 same/2 above), `moveType` (0 fixed/1 random/2 approach/3 custom), `conditions`, `list`.',
     inputSchema: {
       mapId: z.number().describe('The ID of the map'),
       name: z.string().describe('Event name'),
@@ -833,13 +890,16 @@ export const mapToolDefinitions: ToolDefinition[] = [
     },
     handler: async (ctx, args) => {
       const { mapId, dryRun: _dryRun, ...eventData } = args;
-      return withValidation(
-        await createMapEvent(
-          ctx.projectPath,
-          mapId,
-          eventData as Omit<MapEvent, 'id' | 'pages'> & { pages?: Partial<EventPage>[] },
-        ),
+      const event = await createMapEvent(
+        ctx.projectPath,
+        mapId,
+        eventData as Omit<MapEvent, 'id' | 'pages'> & { pages?: Partial<EventPage>[] },
       );
+      const result = withValidation(event);
+      const reach = await actionButtonReachabilityWarnings(ctx.projectPath, mapId, event);
+      return reach.length > 0
+        ? { ...result, warnings: [...(result.warnings ?? []), ...reach] }
+        : result;
     },
   },
   {
