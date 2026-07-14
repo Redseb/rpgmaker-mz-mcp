@@ -119,7 +119,7 @@ export async function updateItem(
     throw new Error(`Item with ID ${itemId} not found`);
   }
 
-  items[itemIndex] = { ...items[itemIndex], ...updates };
+  items[itemIndex] = { ...items[itemIndex], ...updates, id: itemId };
 
   const itemsPath = getDataPath(projectPath, 'Items.json');
   await commitChange(itemsPath, items);
@@ -232,7 +232,7 @@ export async function updateWeapon(
     throw new Error(`Weapon with ID ${weaponId} not found`);
   }
 
-  weapons[weaponIndex] = { ...weapons[weaponIndex], ...updates };
+  weapons[weaponIndex] = { ...weapons[weaponIndex], ...updates, id: weaponId };
 
   const weaponsPath = getDataPath(projectPath, 'Weapons.json');
   await commitChange(weaponsPath, weapons);
@@ -255,7 +255,7 @@ export async function updateArmor(
     throw new Error(`Armor with ID ${armorId} not found`);
   }
 
-  armors[armorIndex] = { ...armors[armorIndex], ...updates };
+  armors[armorIndex] = { ...armors[armorIndex], ...updates, id: armorId };
 
   const armorsPath = getDataPath(projectPath, 'Armors.json');
   await commitChange(armorsPath, armors);

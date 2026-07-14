@@ -73,7 +73,7 @@ export async function updateActor(
     throw new Error(`Actor with ID ${actorId} not found`);
   }
 
-  actors[actorIndex] = { ...actors[actorIndex], ...updates };
+  actors[actorIndex] = { ...actors[actorIndex], ...updates, id: actorId };
 
   const actorsPath = getDataPath(projectPath, 'Actors.json');
   await commitChange(actorsPath, actors);

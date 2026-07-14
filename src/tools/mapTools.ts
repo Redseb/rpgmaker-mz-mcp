@@ -547,7 +547,7 @@ export async function updateMapEvent(
     throw new Error(`Event ${eventId} not found on map ${mapId}`);
   }
 
-  map.events[eventId] = { ...map.events[eventId]!, ...updates };
+  map.events[eventId] = { ...map.events[eventId]!, ...updates, id: eventId };
 
   const mapPath = getMapPath(projectPath, mapId);
   await commitChange(mapPath, map);

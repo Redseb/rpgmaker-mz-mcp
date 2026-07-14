@@ -125,7 +125,7 @@ export async function updateSkill(
     throw new Error(`Skill with ID ${skillId} not found`);
   }
 
-  skills[skillIndex] = { ...skills[skillIndex], ...updates };
+  skills[skillIndex] = { ...skills[skillIndex], ...updates, id: skillId };
 
   const skillsPath = getDataPath(projectPath, 'Skills.json');
   await commitChange(skillsPath, skills);
