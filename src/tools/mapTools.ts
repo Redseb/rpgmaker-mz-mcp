@@ -201,6 +201,13 @@ export async function createMap(
     throw new Error(`parentId ${parentId} does not match any existing map`);
   }
 
+  // A bad tilesetId renders as a black map at runtime; validate it against
+  // Tilesets.json (loaded fail-soft — skip the check if the file is missing).
+  const tilesets = await readJsonArraySoft<Tileset>(getDataPath(projectPath, 'Tilesets.json'));
+  if (tilesets.length > 0 && !tilesets[tilesetId]) {
+    throw new Error(`tilesetId ${tilesetId} does not match any existing tileset`);
+  }
+
   // Allocate a fresh id: one past the highest existing map id. MapInfos is a
   // 1-indexed array whose slot 0 is null.
   const maxId = infos.reduce((max, info) => (info && info.id > max ? info.id : max), 0);
