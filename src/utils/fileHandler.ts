@@ -113,11 +113,24 @@ export function getMapPath(projectPath: string, mapId: number): string {
 /**
  * Validate RPG Maker MZ project path
  */
+/**
+ * Paths that have already validated successfully. A directory doesn't stop being
+ * an RPG Maker project mid-session, so the check is memoized after the first pass
+ * — every tool call would otherwise re-run it. Only successes are cached (a path
+ * that isn't yet a project might become one).
+ */
+const validatedProjectPaths = new Set<string>();
+
 export async function validateProjectPath(projectPath: string): Promise<boolean> {
+  if (validatedProjectPaths.has(projectPath)) {
+    return true;
+  }
   try {
-    // Check if project has essential files
-    await readFile(join(projectPath, 'game.rmmzproject'), 'utf-8');
-    await readFile(getDataPath(projectPath, 'System.json'), 'utf-8');
+    // Check the essential files exist (access(), not a full read — we only need
+    // presence, not contents).
+    await access(join(projectPath, 'game.rmmzproject'));
+    await access(getDataPath(projectPath, 'System.json'));
+    validatedProjectPaths.add(projectPath);
     return true;
   } catch {
     return false;
