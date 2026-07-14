@@ -3,7 +3,12 @@ import { readJsonFile, getMapPath } from '../utils/fileHandler.js';
 import { commitChange } from '../utils/commit.js';
 import { MapData, MapEvent, EventImage, MoveRoute, EventCommand } from '../utils/types.js';
 import { ToolDefinition } from '../registry.js';
-import { createMapEvent, blankEventPage, actionButtonReachabilityWarnings } from './mapTools.js';
+import {
+  createMapEvent,
+  blankEventPage,
+  actionButtonReachabilityWarnings,
+  summarizeCreatedEvent,
+} from './mapTools.js';
 import { validateEvent, ValidationWarning } from '../validation/eventCommands.js';
 import { showText, ShowTextOptions } from '../events/commandBuilders.js';
 import { listAssets } from './assetTools.js';
@@ -401,8 +406,12 @@ export const eventPageToolDefinitions: ToolDefinition[] = [
         ...missingGraphicWarnings(args.characterName),
         ...(await characterNameWarnings(ctx.projectPath, args.characterName)),
         ...(await actionButtonReachabilityWarnings(ctx.projectPath, args.mapId, event)),
+        ...validateEvent(event).warnings,
       ];
-      return withValidation(event, warnings);
+      // Return a compact summary, not the full event with every defaulted page
+      // field — a huge token cost on every NPC (re-read via get_map_event).
+      const summary = summarizeCreatedEvent(event);
+      return warnings.length > 0 ? { event: summary, warnings } : { event: summary };
     },
   },
 ];

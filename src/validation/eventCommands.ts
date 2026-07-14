@@ -111,6 +111,11 @@ export const KNOWN_COMMANDS: Record<number, CommandSpec> = {
   314: { name: 'Recover All', check: expectLength(2) },
   315: { name: 'Change EXP', check: expectLength(6) },
   316: { name: 'Change Level', check: expectLength(6) },
+  // Scene control (all parameterless)
+  351: { name: 'Open Menu Screen', check: expectLength(0) },
+  352: { name: 'Open Save Screen', check: expectLength(0) },
+  353: { name: 'Game Over', check: expectLength(0) },
+  354: { name: 'Return to Title Screen', check: expectLength(0) },
   // Advanced
   355: { name: 'Script', check: expectAtLeast(1) },
   356: { name: 'Plugin Command (MV)', check: expectAtLeast(1) },

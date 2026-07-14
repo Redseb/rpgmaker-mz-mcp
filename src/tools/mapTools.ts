@@ -40,6 +40,30 @@ function withValidation(event: MapEvent): {
 }
 
 /**
+ * Trim a freshly-created event down to a confirmation summary for a tool
+ * response. The full event echoes every default field of every page (hundreds
+ * of tokens even for a bare NPC), yet the caller already knows what it sent and
+ * can re-read specifics with get_map_event — so return just id/name/position and
+ * a page count. Validation warnings are still computed from the *full* event by
+ * the caller before the event is summarized.
+ */
+export function summarizeCreatedEvent(event: MapEvent): {
+  id: number;
+  name: string;
+  x: number;
+  y: number;
+  pageCount: number;
+} {
+  return {
+    id: event.id,
+    name: event.name,
+    x: event.x,
+    y: event.y,
+    pageCount: event.pages.length,
+  };
+}
+
+/**
  * Warn (never throw) when an event has an action-button page drawn with priority
  * "below characters" (0) while the event's tile is impassable. Such a page fires
  * only when the player STANDS ON the tile — impossible on a blocked cell — so the
@@ -895,11 +919,14 @@ export const mapToolDefinitions: ToolDefinition[] = [
         mapId,
         eventData as Omit<MapEvent, 'id' | 'pages'> & { pages?: Partial<EventPage>[] },
       );
-      const result = withValidation(event);
-      const reach = await actionButtonReachabilityWarnings(ctx.projectPath, mapId, event);
-      return reach.length > 0
-        ? { ...result, warnings: [...(result.warnings ?? []), ...reach] }
-        : result;
+      const warnings = [
+        ...validateEvent(event).warnings,
+        ...(await actionButtonReachabilityWarnings(ctx.projectPath, mapId, event)),
+      ];
+      // Return a compact summary, not the full event with every defaulted page
+      // field — a huge token cost on every authoring call (re-read via get_map_event).
+      const summary = summarizeCreatedEvent(event);
+      return warnings.length > 0 ? { event: summary, warnings } : { event: summary };
     },
   },
   {
@@ -949,7 +976,15 @@ export const mapToolDefinitions: ToolDefinition[] = [
       mapId: z.number().describe('The ID of the map'),
       updates: z.record(z.string(), z.unknown()).describe('Partial MapData properties to merge'),
     },
-    handler: (ctx, args) => updateMap(ctx.projectPath, args.mapId, args.updates),
+    handler: async (ctx, args) => {
+      const map = await updateMap(ctx.projectPath, args.mapId, args.updates);
+      // Drop the large tile `data` array (~w*h*6 ints) from the echo — update_map
+      // never edits tiles, so returning them is pure token bloat (on a painted
+      // 40x40 map it blew past the MCP token limit; the write still applied).
+      // Mirrors create_map (P2-6); get_map returns the full data when needed.
+      const { data, ...mapWithoutData } = map;
+      return { ...mapWithoutData, dataTileCount: data.length };
+    },
   },
   {
     name: 'resize_map',

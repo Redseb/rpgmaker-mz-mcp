@@ -157,14 +157,19 @@ describe('create_npc (integration)', () => {
         text: ['Hello there!', 'Welcome to town.'],
         speakerName: 'Villager',
       },
-    )) as { event: MapEvent; warnings?: unknown[] };
+    )) as { event: { id: number; name: string; x: number; y: number }; warnings?: unknown[] };
 
     expect(result.warnings).toBeUndefined();
+    // The handler returns a compact summary, not the full event.
     const ev = result.event;
     expect(ev.id).toBe(2); // next id after the seeded event
     expect(ev.x).toBe(7);
     expect(ev.y).toBe(8);
-    const page = ev.pages[0];
+
+    // Page details are read back off the persisted map file.
+    const map = JSON.parse(await readFile(join(dir, 'data', 'Map001.json'), 'utf-8')) as MapData;
+    expect(map.events[2]!.name).toBe('Villager');
+    const page = map.events[2]!.pages[0];
     expect(page.image.characterName).toBe('People1');
     expect(page.image.pattern).toBe(1); // idle frame when a sprite is set
     expect(page.trigger).toBe(0); // action_button
@@ -172,10 +177,6 @@ describe('create_npc (integration)', () => {
     // Show Text sequence, terminated
     expect(page.list.map((c) => c.code)).toEqual([101, 401, 401, 0]);
     expect(page.list[0].parameters[4]).toBe('Villager'); // speaker name
-
-    // Actually persisted to the map file
-    const map = JSON.parse(await readFile(join(dir, 'data', 'Map001.json'), 'utf-8')) as MapData;
-    expect(map.events[2]!.name).toBe('Villager');
   });
 
   it('prefers an explicit commands list over text and terminates it', async () => {
@@ -192,10 +193,11 @@ describe('create_npc (integration)', () => {
     const result = (await get('create_npc').handler(
       { projectPath: dir },
       { mapId: 1, x: 1, y: 1, name: 'Ghost', characterName: 'NotReal', text: ['boo'] },
-    )) as { event: MapEvent; warnings?: unknown[] };
+    )) as { event: { id: number }; warnings?: unknown[] };
     expect(result.warnings && result.warnings.length).toBeGreaterThan(0);
     // Still created despite the warning.
-    expect(result.event.pages[0].image.characterName).toBe('NotReal');
+    const map = JSON.parse(await readFile(join(dir, 'data', 'Map001.json'), 'utf-8')) as MapData;
+    expect(map.events[result.event.id]!.pages[0].image.characterName).toBe('NotReal');
   });
 
   it('warns (never throws) when no graphic is set — an invisible NPC (F1)', async () => {

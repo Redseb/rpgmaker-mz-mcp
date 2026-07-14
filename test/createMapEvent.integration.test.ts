@@ -1,9 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, mkdir, rm, writeFile } from 'fs/promises';
+import { mkdtemp, mkdir, rm, writeFile, readFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { blankEventPage, normalizeEventPage, mapToolDefinitions } from '../src/tools/mapTools.js';
-import { MapEvent } from '../src/utils/types.js';
+import { MapData } from '../src/utils/types.js';
+
+/** Read a persisted event back off disk — the handler now returns only a summary. */
+async function readEvent(dir: string, eventId: number) {
+  const map = JSON.parse(await readFile(join(dir, 'data', 'Map001.json'), 'utf-8')) as MapData;
+  return map.events[eventId]!;
+}
 
 describe('normalizeEventPage (partial-page merge)', () => {
   it('fills every field of a blank page from an empty partial', () => {
@@ -76,10 +82,14 @@ describe('create_map_event handler (partial pages)', () => {
         y: 4,
         pages: [{ trigger: 0, image: { characterName: 'Actor1' } }],
       },
-    )) as { event: MapEvent };
+    )) as { event: { id: number; name: string; pageCount: number } };
 
+    // The handler returns a compact summary, not the full event.
     expect(result.event.id).toBe(1);
-    const page = result.event.pages[0];
+    expect(result.event.name).toBe('Sign');
+    expect(result.event.pageCount).toBe(1);
+
+    const page = (await readEvent(dir, 1)).pages[0];
     // The partial was completed: graphic set, everything else defaulted.
     expect(page.image.characterName).toBe('Actor1');
     expect(page.image.direction).toBe(2);
@@ -93,8 +103,8 @@ describe('create_map_event handler (partial pages)', () => {
     const result = (await def.handler(
       { projectPath: dir },
       { mapId: 1, name: 'Empty', x: 0, y: 0 },
-    )) as { event: MapEvent };
-    expect(result.event.pages).toHaveLength(1);
-    expect(result.event.pages[0]).toEqual(blankEventPage());
+    )) as { event: { pageCount: number } };
+    expect(result.event.pageCount).toBe(1);
+    expect((await readEvent(dir, 1)).pages[0]).toEqual(blankEventPage());
   });
 });
