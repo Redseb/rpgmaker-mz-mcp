@@ -67,33 +67,33 @@ export function defaultArmor(): Omit<Armor, 'id'> {
 /**
  * Get all items from the project
  */
-export async function getItems(projectPath: string): Promise<Item[]> {
+export async function getItems(projectPath: string): Promise<(Item | null)[]> {
   const itemsPath = getDataPath(projectPath, 'Items.json');
-  return await readJsonFile<Item[]>(itemsPath);
+  return await readJsonFile<(Item | null)[]>(itemsPath);
 }
 
 /**
  * Get all weapons from the project
  */
-export async function getWeapons(projectPath: string): Promise<Weapon[]> {
+export async function getWeapons(projectPath: string): Promise<(Weapon | null)[]> {
   const weaponsPath = getDataPath(projectPath, 'Weapons.json');
-  return await readJsonFile<Weapon[]>(weaponsPath);
+  return await readJsonFile<(Weapon | null)[]>(weaponsPath);
 }
 
 /**
  * Get all armors from the project
  */
-export async function getArmors(projectPath: string): Promise<Armor[]> {
+export async function getArmors(projectPath: string): Promise<(Armor | null)[]> {
   const armorsPath = getDataPath(projectPath, 'Armors.json');
-  return await readJsonFile<Armor[]>(armorsPath);
+  return await readJsonFile<(Armor | null)[]>(armorsPath);
 }
 
 /**
  * Get all skills from the project
  */
-export async function getSkills(projectPath: string): Promise<Skill[]> {
+export async function getSkills(projectPath: string): Promise<(Skill | null)[]> {
   const skillsPath = getDataPath(projectPath, 'Skills.json');
-  return await readJsonFile<Skill[]>(skillsPath);
+  return await readJsonFile<(Skill | null)[]>(skillsPath);
 }
 
 /**
@@ -119,12 +119,12 @@ export async function updateItem(
     throw new Error(`Item with ID ${itemId} not found`);
   }
 
-  items[itemIndex] = { ...items[itemIndex], ...updates, id: itemId };
+  items[itemIndex] = { ...items[itemIndex]!, ...updates, id: itemId };
 
   const itemsPath = getDataPath(projectPath, 'Items.json');
   await commitChange(itemsPath, items);
 
-  return items[itemIndex];
+  return items[itemIndex]!;
 }
 
 /**
@@ -232,12 +232,12 @@ export async function updateWeapon(
     throw new Error(`Weapon with ID ${weaponId} not found`);
   }
 
-  weapons[weaponIndex] = { ...weapons[weaponIndex], ...updates, id: weaponId };
+  weapons[weaponIndex] = { ...weapons[weaponIndex]!, ...updates, id: weaponId };
 
   const weaponsPath = getDataPath(projectPath, 'Weapons.json');
   await commitChange(weaponsPath, weapons);
 
-  return weapons[weaponIndex];
+  return weapons[weaponIndex]!;
 }
 
 /**
@@ -255,12 +255,12 @@ export async function updateArmor(
     throw new Error(`Armor with ID ${armorId} not found`);
   }
 
-  armors[armorIndex] = { ...armors[armorIndex], ...updates, id: armorId };
+  armors[armorIndex] = { ...armors[armorIndex]!, ...updates, id: armorId };
 
   const armorsPath = getDataPath(projectPath, 'Armors.json');
   await commitChange(armorsPath, armors);
 
-  return armors[armorIndex];
+  return armors[armorIndex]!;
 }
 
 /**
@@ -278,12 +278,12 @@ export async function updateSkill(
     throw new Error(`Skill with ID ${skillId} not found`);
   }
 
-  skills[skillIndex] = { ...skills[skillIndex], ...updates };
+  skills[skillIndex] = { ...skills[skillIndex]!, ...updates };
 
   const skillsPath = getDataPath(projectPath, 'Skills.json');
   await commitChange(skillsPath, skills);
 
-  return skills[skillIndex];
+  return skills[skillIndex]!;
 }
 
 /**
@@ -294,8 +294,8 @@ export async function searchItems(projectPath: string, searchTerm: string): Prom
   const lowerSearchTerm = searchTerm.toLowerCase();
 
   return items.filter(
-    (item) =>
-      item &&
+    (item): item is Item =>
+      !!item &&
       (item.name.toLowerCase().includes(lowerSearchTerm) ||
         item.description.toLowerCase().includes(lowerSearchTerm)),
   );

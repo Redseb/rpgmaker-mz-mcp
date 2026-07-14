@@ -45,9 +45,9 @@ export function defaultActor(): Omit<Actor, 'id'> {
 /**
  * Get all actors from the project
  */
-export async function getActors(projectPath: string): Promise<Actor[]> {
+export async function getActors(projectPath: string): Promise<(Actor | null)[]> {
   const actorsPath = getDataPath(projectPath, 'Actors.json');
-  return await readJsonFile<Actor[]>(actorsPath);
+  return await readJsonFile<(Actor | null)[]>(actorsPath);
 }
 
 /**
@@ -73,12 +73,12 @@ export async function updateActor(
     throw new Error(`Actor with ID ${actorId} not found`);
   }
 
-  actors[actorIndex] = { ...actors[actorIndex], ...updates, id: actorId };
+  actors[actorIndex] = { ...actors[actorIndex]!, ...updates, id: actorId };
 
   const actorsPath = getDataPath(projectPath, 'Actors.json');
   await commitChange(actorsPath, actors);
 
-  return actors[actorIndex];
+  return actors[actorIndex]!;
 }
 
 /**
@@ -140,8 +140,8 @@ export async function searchActors(projectPath: string, searchTerm: string): Pro
   const lowerSearchTerm = searchTerm.toLowerCase();
 
   return actors.filter(
-    (actor) =>
-      actor &&
+    (actor): actor is Actor =>
+      !!actor &&
       (actor.name.toLowerCase().includes(lowerSearchTerm) ||
         actor.nickname.toLowerCase().includes(lowerSearchTerm)),
   );

@@ -8,9 +8,9 @@ import { firstMissingEffectRef } from '../validation/createRefs.js';
 /**
  * Get all skills from the project
  */
-export async function getSkills(projectPath: string): Promise<Skill[]> {
+export async function getSkills(projectPath: string): Promise<(Skill | null)[]> {
   const skillsPath = getDataPath(projectPath, 'Skills.json');
-  return await readJsonFile<Skill[]>(skillsPath);
+  return await readJsonFile<(Skill | null)[]>(skillsPath);
 }
 
 /**
@@ -125,12 +125,12 @@ export async function updateSkill(
     throw new Error(`Skill with ID ${skillId} not found`);
   }
 
-  skills[skillIndex] = { ...skills[skillIndex], ...updates, id: skillId };
+  skills[skillIndex] = { ...skills[skillIndex]!, ...updates, id: skillId };
 
   const skillsPath = getDataPath(projectPath, 'Skills.json');
   await commitChange(skillsPath, skills);
 
-  return skills[skillIndex];
+  return skills[skillIndex]!;
 }
 
 /**
@@ -165,8 +165,8 @@ export async function searchSkills(projectPath: string, searchTerm: string): Pro
   const lowerSearchTerm = searchTerm.toLowerCase();
 
   return skills.filter(
-    (skill) =>
-      skill &&
+    (skill): skill is Skill =>
+      !!skill &&
       (skill.name.toLowerCase().includes(lowerSearchTerm) ||
         skill.description.toLowerCase().includes(lowerSearchTerm)),
   );
