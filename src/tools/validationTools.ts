@@ -244,8 +244,8 @@ export const validationToolDefinitions: ToolDefinition[] = [
     description:
       "Validate a single event's command lists against the known RPG Maker MZ command table. Read-only: reports parameter/structure warnings without changing anything.",
     inputSchema: {
-      mapId: z.number().describe('The ID of the map'),
-      eventId: z.number().describe('The ID of the event to validate'),
+      mapId: z.number().int().positive().describe('The ID of the map'),
+      eventId: z.number().int().positive().describe('The ID of the event to validate'),
     },
     handler: (ctx, args) => validateEventTool(ctx.projectPath, args.mapId, args.eventId),
   },

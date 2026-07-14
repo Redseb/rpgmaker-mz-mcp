@@ -308,7 +308,7 @@ export const battleToolDefinitions: ToolDefinition[] = [
     description:
       "Update an enemy's properties (shallow merge into the existing record). Returns `{ enemy, warnings? }` — a `battlerName` not found in img/enemies is flagged warn-by-default.",
     inputSchema: {
-      enemyId: z.number().describe('The ID of the enemy to update'),
+      enemyId: z.number().int().positive().describe('The ID of the enemy to update'),
       updates: z
         .record(z.string(), z.unknown())
         .describe('Object containing enemy properties to update'),
@@ -356,7 +356,7 @@ export const battleToolDefinitions: ToolDefinition[] = [
     description:
       "Update a troop's properties (shallow merge). If `members` is provided, each enemyId is validated to exist. Returns warn-by-default validation of the troop pages.",
     inputSchema: {
-      troopId: z.number().describe('The ID of the troop to update'),
+      troopId: z.number().int().positive().describe('The ID of the troop to update'),
       updates: z
         .record(z.string(), z.unknown())
         .describe('Object containing troop properties to update (name, members, pages)'),

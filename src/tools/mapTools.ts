@@ -1027,7 +1027,7 @@ export const mapToolDefinitions: ToolDefinition[] = [
     description:
       'Get map data by ID. The tile `data` array can be huge on a painted map (width*height*6 ints) and blow the MCP token limit, so pass includeData:false to omit it (you get dataTileCount instead) and read tiles with get_map_region when needed. includeData defaults to true for backward compatibility.',
     inputSchema: {
-      mapId: z.number().describe('The ID of the map to retrieve'),
+      mapId: z.number().int().positive().describe('The ID of the map to retrieve'),
       includeData: z
         .boolean()
         .optional()
@@ -1146,15 +1146,15 @@ export const mapToolDefinitions: ToolDefinition[] = [
   {
     name: 'get_map_events',
     description: 'Get all events from a specific map',
-    inputSchema: { mapId: z.number().describe('The ID of the map') },
+    inputSchema: { mapId: z.number().int().positive().describe('The ID of the map') },
     handler: (ctx, args) => getMapEvents(ctx.projectPath, args.mapId),
   },
   {
     name: 'get_map_event',
     description: 'Get a specific event from a map',
     inputSchema: {
-      mapId: z.number().describe('The ID of the map'),
-      eventId: z.number().describe('The ID of the event'),
+      mapId: z.number().int().positive().describe('The ID of the map'),
+      eventId: z.number().int().positive().describe('The ID of the event'),
     },
     handler: (ctx, args) => getMapEvent(ctx.projectPath, args.mapId, args.eventId),
   },
@@ -1163,8 +1163,8 @@ export const mapToolDefinitions: ToolDefinition[] = [
     mutates: true,
     description: "Update a map event's properties",
     inputSchema: {
-      mapId: z.number().describe('The ID of the map'),
-      eventId: z.number().describe('The ID of the event'),
+      mapId: z.number().int().positive().describe('The ID of the map'),
+      eventId: z.number().int().positive().describe('The ID of the event'),
       updates: z
         .record(z.string(), z.unknown())
         .describe('Object containing event properties to update'),
@@ -1184,10 +1184,10 @@ export const mapToolDefinitions: ToolDefinition[] = [
     description:
       'Create a new event on a map. Each page is merged onto a blank "New Event" page (trigger 0 action-button, priority 0 below characters, no graphic, empty command list, standing move type), so you only supply the fields that differ — pass e.g. `{ image: { characterName: \'Actor1\', characterIndex: 0 }, trigger: 3, list: [...] }` and the rest is filled in. Nested `image`/`conditions` deep-merge; an omitted `list` becomes a valid empty (code-0-terminated) list. Omit `pages` entirely for a bare one-page event. For the common "talking NPC" case prefer create_npc. An action-button page meant to fire from facing (doors, entrances, signs) needs `priorityType: 1` — with the default 0 (below) it only fires when stood on, so on an impassable tile it can never trigger (warned). Page fields: `image` { characterName, characterIndex, direction (2 down/4 left/6 right/8 up), pattern, tileId }, `trigger` (0 action-button/1 player-touch/2 event-touch/3 autorun/4 parallel), `priorityType` (0 below/1 same/2 above), `moveType` (0 fixed/1 random/2 approach/3 custom), `conditions`, `list`.',
     inputSchema: {
-      mapId: z.number().describe('The ID of the map'),
+      mapId: z.number().int().positive().describe('The ID of the map'),
       name: z.string().describe('Event name'),
-      x: z.number().describe('X tile position'),
-      y: z.number().describe('Y tile position'),
+      x: z.number().int().min(0).describe('X tile position'),
+      y: z.number().int().min(0).describe('Y tile position'),
       note: z.string().optional().describe('Event note field'),
       pages: z
         .array(z.record(z.string(), z.unknown()))
@@ -1217,7 +1217,7 @@ export const mapToolDefinitions: ToolDefinition[] = [
     name: 'search_map_events',
     description: 'Search events on a map by name',
     inputSchema: {
-      mapId: z.number().describe('The ID of the map'),
+      mapId: z.number().int().positive().describe('The ID of the map'),
       searchTerm: z.string().describe('The search term to find events'),
     },
     handler: (ctx, args) => searchMapEvents(ctx.projectPath, args.mapId, args.searchTerm),
@@ -1227,17 +1227,22 @@ export const mapToolDefinitions: ToolDefinition[] = [
     mutates: true,
     description: 'Add a command to an event page',
     inputSchema: {
-      mapId: z.number().describe('The ID of the map'),
-      eventId: z.number().describe('The ID of the event'),
-      pageIndex: z.number().describe('Zero-based page index'),
+      mapId: z.number().int().positive().describe('The ID of the map'),
+      eventId: z.number().int().positive().describe('The ID of the event'),
+      pageIndex: z.number().int().min(0).describe('Zero-based page index'),
       command: z
         .object({
-          code: z.number().describe('Event command code (see RPG Maker MZ documentation)'),
-          indent: z.number().optional().default(0).describe('Indentation level'),
+          code: z.number().int().describe('Event command code (see RPG Maker MZ documentation)'),
+          indent: z.number().int().min(0).optional().default(0).describe('Indentation level'),
           parameters: z.array(z.unknown()).describe('Command parameters'),
         })
         .describe('The event command to insert'),
-      position: z.number().optional().describe('Insertion index; defaults to end of the list'),
+      position: z
+        .number()
+        .int()
+        .min(0)
+        .optional()
+        .describe('Insertion index; defaults to end of the list'),
     },
     handler: async (ctx, args) =>
       withValidation(
@@ -1257,7 +1262,7 @@ export const mapToolDefinitions: ToolDefinition[] = [
     description:
       "Update a map's top-level properties (name, display name, bgm, encounters, etc.). Does not repaint tiles. Cannot change width/height (that would desync the tile data array) — use resize_map for that.",
     inputSchema: {
-      mapId: z.number().describe('The ID of the map'),
+      mapId: z.number().int().positive().describe('The ID of the map'),
       updates: z.record(z.string(), z.unknown()).describe('Partial MapData properties to merge'),
     },
     handler: async (ctx, args) => {
@@ -1276,7 +1281,7 @@ export const mapToolDefinitions: ToolDefinition[] = [
     description:
       "Resize a map to new width/height, safely repadding every z-layer of its tile data (existing tiles kept where the old and new grids overlap; new cells blank; shrinking crops). This is the ONLY safe way to change a map's dimensions — update_map refuses a width/height change because it would not resize the tile array. Warns about any event left outside the new bounds.",
     inputSchema: {
-      mapId: z.number().describe('The ID of the map to resize'),
+      mapId: z.number().int().positive().describe('The ID of the map to resize'),
       width: z.number().int().positive().describe('New width in tiles'),
       height: z.number().int().positive().describe('New height in tiles'),
     },
@@ -1288,7 +1293,7 @@ export const mapToolDefinitions: ToolDefinition[] = [
     description:
       "Set a map's random-encounter list (replaces it wholesale) and optionally its encounterStep (average steps between encounters). Each encounter is { troopId, weight?, regionSet? }: weight biases the random pick (default 5), regionSet restricts it to those map region ids (empty/omitted = anywhere). Every troopId is validated against Troops.json — a non-existent troop throws. Prefer this over update_map for encounters (it validates and hides the on-disk shape).",
     inputSchema: {
-      mapId: z.number().describe('The ID of the map'),
+      mapId: z.number().int().positive().describe('The ID of the map'),
       encounters: z
         .array(
           z.object({
@@ -1314,7 +1319,7 @@ export const mapToolDefinitions: ToolDefinition[] = [
   {
     name: 'get_map_dimensions',
     description: 'Get the width and height (in tiles) of a map',
-    inputSchema: { mapId: z.number().describe('The ID of the map') },
+    inputSchema: { mapId: z.number().int().positive().describe('The ID of the map') },
     handler: (ctx, args) => getMapDimensions(ctx.projectPath, args.mapId),
   },
   {
@@ -1344,8 +1349,8 @@ export const mapToolDefinitions: ToolDefinition[] = [
     mutates: true,
     description: 'Delete an event from a map by ID',
     inputSchema: {
-      mapId: z.number().describe('The ID of the map'),
-      eventId: z.number().describe('The ID of the event'),
+      mapId: z.number().int().positive().describe('The ID of the map'),
+      eventId: z.number().int().positive().describe('The ID of the event'),
     },
     handler: (ctx, args) => deleteMapEvent(ctx.projectPath, args.mapId, args.eventId),
   },

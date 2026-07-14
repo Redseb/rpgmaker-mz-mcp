@@ -967,13 +967,18 @@ export const eventCommandToolDefinitions: ToolDefinition[] = [
     description:
       'Insert a pre-built sequence of event commands (from the build_* builders) into an event page’s command list, splicing before the page’s end marker (or at `position`). The mutating companion to the read-only builders. Returns warn-by-default validation of the resulting page.',
     inputSchema: {
-      mapId: z.number().describe('The ID of the map'),
-      eventId: z.number().describe('The ID of the event'),
-      pageIndex: z.number().describe('Zero-based page index'),
+      mapId: z.number().int().positive().describe('The ID of the map'),
+      eventId: z.number().int().positive().describe('The ID of the event'),
+      pageIndex: z.number().int().min(0).describe('Zero-based page index'),
       commands: z
         .array(eventCommandShape)
         .describe('The event commands to insert (e.g. the `commands` from a build_* tool)'),
-      position: z.number().optional().describe('Insertion index; defaults to the end of the list'),
+      position: z
+        .number()
+        .int()
+        .min(0)
+        .optional()
+        .describe('Insertion index; defaults to the end of the list'),
     },
     handler: async (ctx, args) => {
       const event = await insertEventCommands(
@@ -1008,7 +1013,12 @@ export const eventCommandToolDefinitions: ToolDefinition[] = [
       commands: z
         .array(eventCommandShape)
         .describe('The event commands to insert (e.g. the `commands` from a build_* tool)'),
-      position: z.number().optional().describe('Insertion index; defaults to the end of the list'),
+      position: z
+        .number()
+        .int()
+        .min(0)
+        .optional()
+        .describe('Insertion index; defaults to the end of the list'),
     },
     handler: (ctx, args) =>
       appendEventCommands(ctx.projectPath, args.target, {

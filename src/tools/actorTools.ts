@@ -150,7 +150,9 @@ export const actorToolDefinitions: ToolDefinition[] = [
   {
     name: 'get_actor',
     description: 'Get a specific actor by ID',
-    inputSchema: { actorId: z.number().describe('The ID of the actor to retrieve') },
+    inputSchema: {
+      actorId: z.number().int().positive().describe('The ID of the actor to retrieve'),
+    },
     handler: (ctx, args) => getActor(ctx.projectPath, args.actorId),
   },
   {
@@ -158,7 +160,7 @@ export const actorToolDefinitions: ToolDefinition[] = [
     mutates: true,
     description: "Update an actor's properties",
     inputSchema: {
-      actorId: z.number().describe('The ID of the actor to update'),
+      actorId: z.number().int().positive().describe('The ID of the actor to update'),
       updates: z
         .record(z.string(), z.unknown())
         .describe('Object containing actor properties to update'),
@@ -174,13 +176,13 @@ export const actorToolDefinitions: ToolDefinition[] = [
       name: z.string(),
       nickname: z.string().optional(),
       profile: z.string().optional(),
-      classId: z.number().optional(),
+      classId: z.number().int().positive().optional(),
       initialLevel: z.number().optional(),
       maxLevel: z.number().optional(),
       characterName: z.string().optional(),
-      characterIndex: z.number().optional(),
+      characterIndex: z.number().int().min(0).optional(),
       faceName: z.string().optional(),
-      faceIndex: z.number().optional(),
+      faceIndex: z.number().int().min(0).optional(),
       battlerName: z.string().optional(),
       traits: z.array(z.unknown()).optional(),
       equips: z.array(z.number()).optional(),

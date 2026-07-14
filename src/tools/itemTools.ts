@@ -369,7 +369,7 @@ export const itemToolDefinitions: ToolDefinition[] = [
     mutates: true,
     description: "Update an item's properties (shallow merge into the existing record)",
     inputSchema: {
-      itemId: z.number().describe('The ID of the item to update'),
+      itemId: z.number().int().positive().describe('The ID of the item to update'),
       updates: z
         .record(z.string(), z.unknown())
         .describe('Object containing item properties to update'),
@@ -412,7 +412,7 @@ export const itemToolDefinitions: ToolDefinition[] = [
     mutates: true,
     description: "Update a weapon's properties (shallow merge into the existing record)",
     inputSchema: {
-      weaponId: z.number().describe('The ID of the weapon to update'),
+      weaponId: z.number().int().positive().describe('The ID of the weapon to update'),
       updates: z
         .record(z.string(), z.unknown())
         .describe('Object containing weapon properties to update'),
@@ -453,7 +453,7 @@ export const itemToolDefinitions: ToolDefinition[] = [
     mutates: true,
     description: "Update an armor's properties (shallow merge into the existing record)",
     inputSchema: {
-      armorId: z.number().describe('The ID of the armor to update'),
+      armorId: z.number().int().positive().describe('The ID of the armor to update'),
       updates: z
         .record(z.string(), z.unknown())
         .describe('Object containing armor properties to update'),

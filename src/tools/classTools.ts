@@ -291,7 +291,7 @@ export const classToolDefinitions: ToolDefinition[] = [
     description:
       "Update a class's properties (shallow merge into the existing record). Use for name, expParams, traits, or to replace the whole learnings/params arrays; for targeted edits prefer add_class_learning / set_class_param_curve. Warns when a learned skill's stypeId has no Add Skill Type trait ({ code: 41 }).",
     inputSchema: {
-      classId: z.number().describe('The ID of the class to update'),
+      classId: z.number().int().positive().describe('The ID of the class to update'),
       updates: z
         .record(z.string(), z.unknown())
         .describe('Object containing class properties to update'),
@@ -308,8 +308,12 @@ export const classToolDefinitions: ToolDefinition[] = [
     description:
       'Add a "learn skill at level" entry to a class (replaces the hack of attaching skills to an actor via an Add-Skill trait). Validates the skillId exists and keeps the learnings sorted by level. Warns (never blocks) when the skill\'s stypeId is not covered by an Add Skill Type trait ({ code: 41, dataId: stypeId, value: 1 }) on the class — without it the skill-type command never appears and actors cannot use the skill.',
     inputSchema: {
-      classId: z.number().describe('The ID of the class to add the learning to'),
-      skillId: z.number().describe('The skill learned (must exist in data/Skills.json)'),
+      classId: z.number().int().positive().describe('The ID of the class to add the learning to'),
+      skillId: z
+        .number()
+        .int()
+        .positive()
+        .describe('The skill learned (must exist in data/Skills.json)'),
       level: z.number().int().describe('Level at which the skill is learned'),
       note: z.string().optional().describe('Optional note for the learning entry'),
     },
@@ -325,7 +329,7 @@ export const classToolDefinitions: ToolDefinition[] = [
     description:
       "Replace one of a class's 8 parameter growth curves. paramId is 0-7 ([maxHP,maxMP,atk,def,mat,mdf,agi,luk]); values must match the existing curve length (same max level).",
     inputSchema: {
-      classId: z.number().describe('The ID of the class to edit'),
+      classId: z.number().int().positive().describe('The ID of the class to edit'),
       paramId: z
         .number()
         .int()

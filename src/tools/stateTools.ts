@@ -169,7 +169,7 @@ export const stateToolDefinitions: ToolDefinition[] = [
     mutates: true,
     description: "Update a state's properties (shallow merge into the existing record)",
     inputSchema: {
-      stateId: z.number().describe('The ID of the state to update'),
+      stateId: z.number().int().positive().describe('The ID of the state to update'),
       updates: z
         .record(z.string(), z.unknown())
         .describe('Object containing state properties to update'),

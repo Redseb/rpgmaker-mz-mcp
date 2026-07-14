@@ -266,16 +266,21 @@ export const moveToolDefinitions: ToolDefinition[] = [
     description:
       'Insert a forced "Set Movement Route" (event command 205, plus the 505 continuation rows the editor expects) into an event page’s command list, moving a character as part of that page. characterId: -1 player, 0 this event, N event id. Pass a moveRoute from create_move_route. Returns warn-by-default validation.',
     inputSchema: {
-      mapId: z.number().describe('The ID of the map'),
-      eventId: z.number().describe('The ID of the event'),
-      pageIndex: z.number().describe('Zero-based page index'),
+      mapId: z.number().int().positive().describe('The ID of the map'),
+      eventId: z.number().int().positive().describe('The ID of the event'),
+      pageIndex: z.number().int().min(0).describe('Zero-based page index'),
       characterId: z
         .number()
         .int()
         .describe('Target character: -1 player, 0 this event, N event id on the map'),
       moveRoute: moveRouteShape.describe('The move route to force (e.g. from create_move_route)'),
       indent: z.number().int().optional().describe('Indentation level in the list (default 0)'),
-      position: z.number().optional().describe('Insertion index; defaults to the end of the list'),
+      position: z
+        .number()
+        .int()
+        .min(0)
+        .optional()
+        .describe('Insertion index; defaults to the end of the list'),
     },
     handler: async (ctx, args) => {
       const route = args.moveRoute as MoveRoute;

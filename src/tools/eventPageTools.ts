@@ -236,9 +236,9 @@ export const eventPageToolDefinitions: ToolDefinition[] = [
     description:
       "Update an existing event page's graphic and behavior in one call, without rebuilding the whole page or touching its command list: sprite (characterName/characterIndex/direction/pattern or a tileId), trigger, priority, movement (type/speed/frequency/route), and the through/walkAnime/stepAnime/directionFix flags. Graphic fields merge onto the current image; warns (never blocks) on an unknown characterName.",
     inputSchema: {
-      mapId: z.number().describe('The ID of the map'),
-      eventId: z.number().describe('The ID of the event'),
-      pageIndex: z.number().describe('Zero-based page index'),
+      mapId: z.number().int().positive().describe('The ID of the map'),
+      eventId: z.number().int().positive().describe('The ID of the event'),
+      pageIndex: z.number().int().min(0).describe('Zero-based page index'),
       characterName: z
         .string()
         .optional()
@@ -320,7 +320,7 @@ export const eventPageToolDefinitions: ToolDefinition[] = [
     description:
       'Create a complete, placed NPC event on a map in one call — a graphic + trigger + a talk list. Provide `text` (built into a Show Text sequence, with optional face/speaker) or an explicit `commands` array (commands wins if both given). Defaults to a solid, action-button NPC facing down. Warns (never blocks) on an unknown characterName, and on NO graphic at all (an NPC with no characterName is invisible in-game — use create_map_event for an intentionally-invisible trigger). The one-shot "make a talking NPC that says X" primitive.',
     inputSchema: {
-      mapId: z.number().describe('The ID of the map to place the NPC on'),
+      mapId: z.number().int().positive().describe('The ID of the map to place the NPC on'),
       x: z.number().int().describe('X tile position'),
       y: z.number().int().describe('Y tile position'),
       name: z.string().describe('Event name (editor label)'),

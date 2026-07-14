@@ -147,7 +147,7 @@ export const commonEventToolDefinitions: ToolDefinition[] = [
     description:
       "Update a common event's properties (shallow merge into the existing record). Use for name, trigger, switchId, or to replace the whole command list. Returns warn-by-default validation of the command list.",
     inputSchema: {
-      commonEventId: z.number().describe('The ID of the common event to update'),
+      commonEventId: z.number().int().positive().describe('The ID of the common event to update'),
       updates: z
         .record(z.string(), z.unknown())
         .describe(
@@ -164,7 +164,11 @@ export const commonEventToolDefinitions: ToolDefinition[] = [
     description:
       'Build a "Common Event" event command (code 117) that calls the given common event, for insertion into an event page via insert_event_commands. Validates the common event exists. Read-only: returns `{ command }` (matching the build_* tools, so it composes into a thenBranch/commands array); writes nothing.',
     inputSchema: {
-      commonEventId: z.number().describe('The ID of the common event to call (must exist)'),
+      commonEventId: z
+        .number()
+        .int()
+        .positive()
+        .describe('The ID of the common event to call (must exist)'),
       indent: z
         .number()
         .int()
