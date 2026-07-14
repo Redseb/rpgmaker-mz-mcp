@@ -698,8 +698,10 @@ export async function deleteMapEvent(
 ): Promise<boolean> {
   const map = await getMap(projectPath, mapId);
 
+  // Mutators throw on a missing target (consistent with delete_map / update_map_event);
+  // getters are the ones that return null.
   if (!map.events[eventId]) {
-    return false;
+    throw new Error(`Event ${eventId} not found on map ${mapId}`);
   }
 
   map.events[eventId] = null;
