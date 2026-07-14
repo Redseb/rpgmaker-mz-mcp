@@ -3,14 +3,7 @@ import { readJsonFile, getDataPath } from '../utils/fileHandler.js';
 import { commitChange } from '../utils/commit.js';
 import { State } from '../utils/types.js';
 import { ToolDefinition } from '../registry.js';
-
-/**
- * Drop keys whose value is `undefined` so a caller's omitted optional field can't
- * clobber a template default when spread over it.
- */
-function definedOnly<T extends object>(obj: T): Partial<T> {
-  return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined)) as Partial<T>;
-}
+import { definedOnly } from '../utils/records.js';
 
 /**
  * Blank state mirroring what the RPG Maker MZ editor writes for a freshly-created

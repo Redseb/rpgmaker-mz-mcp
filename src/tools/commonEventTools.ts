@@ -3,18 +3,11 @@ import { readJsonFile, getDataPath } from '../utils/fileHandler.js';
 import { commitChange } from '../utils/commit.js';
 import { CommonEvent, EventCommand } from '../utils/types.js';
 import { ToolDefinition } from '../registry.js';
+import { definedOnly } from '../utils/records.js';
 import { validateCommandList, ValidationWarning } from '../validation/eventCommands.js';
 
 /** Command code for "Common Event" (call a common event from an event page). */
 const CALL_COMMON_EVENT_CODE = 117;
-
-/**
- * Drop keys whose value is `undefined` so a caller's omitted optional field can't
- * clobber a template default when spread over it.
- */
-function definedOnly<T extends object>(obj: T): Partial<T> {
-  return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined)) as Partial<T>;
-}
 
 /**
  * A blank common event mirroring what the RPG Maker MZ editor writes for a fresh

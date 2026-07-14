@@ -3,17 +3,10 @@ import { readJsonFile, readJsonArraySoft, getDataPath } from '../utils/fileHandl
 import { commitChange } from '../utils/commit.js';
 import { Enemy, Troop, TroopMember, TroopPage } from '../utils/types.js';
 import { ToolDefinition } from '../registry.js';
+import { definedOnly } from '../utils/records.js';
 import { validateCommandList, ValidationWarning } from '../validation/eventCommands.js';
 import { firstMissingEnemyRef } from '../validation/createRefs.js';
 import { listAssets } from './assetTools.js';
-
-/**
- * Drop keys whose value is `undefined` so a caller's omitted optional field can't
- * clobber a template default when spread over it.
- */
-function definedOnly<T extends object>(obj: T): Partial<T> {
-  return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined)) as Partial<T>;
-}
 
 /**
  * Blank enemy mirroring what the RPG Maker MZ editor writes for a freshly-created

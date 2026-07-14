@@ -3,12 +3,8 @@ import { readJsonFile, readJsonArraySoft, getDataPath } from '../utils/fileHandl
 import { commitChange } from '../utils/commit.js';
 import { Item, Weapon, Armor, Skill } from '../utils/types.js';
 import { ToolDefinition } from '../registry.js';
+import { definedOnly } from '../utils/records.js';
 import { firstMissingEffectRef } from '../validation/createRefs.js';
-
-/** Drop keys whose value is `undefined` so overrides can't clobber template defaults. */
-function definedOnly<T extends object>(obj: T): Partial<T> {
-  return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined)) as Partial<T>;
-}
 
 /** The editor's shape for a fresh "New Item" (all zeros / sensible defaults). */
 export function defaultItem(): Omit<Item, 'id'> {

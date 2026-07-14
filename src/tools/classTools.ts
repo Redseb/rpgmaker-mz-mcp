@@ -3,6 +3,7 @@ import { readJsonFile, getDataPath } from '../utils/fileHandler.js';
 import { commitChange } from '../utils/commit.js';
 import { GameClass, Learning, Skill } from '../utils/types.js';
 import { ToolDefinition } from '../registry.js';
+import { definedOnly } from '../utils/records.js';
 import { ValidationWarning } from '../validation/eventCommands.js';
 
 /** Human-readable labels for the 8 base parameters, indexed 0-7. */
@@ -25,14 +26,6 @@ const DEFAULT_PARAM_CURVE: [base: number, growth: number][] = [
 ];
 
 const DEFAULT_MAX_LEVEL = 99;
-
-/**
- * Drop keys whose value is `undefined` so a caller's omitted optional field can't
- * clobber a template default when spread over it.
- */
-function definedOnly<T extends object>(obj: T): Partial<T> {
-  return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined)) as Partial<T>;
-}
 
 /**
  * Build the 8×(maxLevel+1) parameter matrix for a new class: one linear curve per
