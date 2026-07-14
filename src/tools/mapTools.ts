@@ -379,6 +379,20 @@ export async function updateMap(
     );
   }
 
+  // `data` and `events` bypass the dedicated tools' invariants: a wrong-length
+  // `data` array desyncs the grid (the exact thing this tool guards width/height
+  // against), and a raw `events` array skips event validation and id conventions.
+  if (updates.data !== undefined) {
+    throw new Error(
+      'update_map cannot set the tile data array. Use paint_tiles/fill_area/set_map_tile (or resize_map to change dimensions).',
+    );
+  }
+  if (updates.events !== undefined) {
+    throw new Error(
+      'update_map cannot set the events array. Use create_map_event/update_map_event/delete_map_event.',
+    );
+  }
+
   const updatedMap = { ...map, ...updates };
 
   const mapPath = getMapPath(projectPath, mapId);
