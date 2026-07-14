@@ -1,7 +1,7 @@
 import { z } from 'zod';
-import { readJsonFile, getDataPath } from '../utils/fileHandler.js';
+import { readJsonFile, readJsonArraySoft, getDataPath, getMapPath } from '../utils/fileHandler.js';
 import { commitChange } from '../utils/commit.js';
-import { SystemData, Terms, Actor } from '../utils/types.js';
+import { SystemData, Terms, Actor, MapInfo, MapData } from '../utils/types.js';
 import { ToolDefinition } from '../registry.js';
 
 /**
@@ -130,7 +130,10 @@ export async function getStartingPosition(
 }
 
 /**
- * Update starting position
+ * Update starting position. Validates the map exists (in MapInfos) and that x/y
+ * fall within that map's bounds — consistent with set_party's actor-id check and
+ * set_encounters' troop check, so a typo can't point new-game at a missing map or
+ * an off-map tile.
  */
 export async function updateStartingPosition(
   projectPath: string,
@@ -138,6 +141,18 @@ export async function updateStartingPosition(
   x: number,
   y: number,
 ): Promise<void> {
+  const mapInfos = await readJsonArraySoft<MapInfo>(getDataPath(projectPath, 'MapInfos.json'));
+  if (!mapInfos[mapId]) {
+    throw new Error(`Starting map id ${mapId} does not exist in MapInfos.json`);
+  }
+
+  const map = await readJsonFile<MapData>(getMapPath(projectPath, mapId));
+  if (x < 0 || x >= map.width || y < 0 || y >= map.height) {
+    throw new Error(
+      `Starting position (${x}, ${y}) is out of bounds for map ${mapId} (${map.width}x${map.height})`,
+    );
+  }
+
   const system = await getSystem(projectPath);
   system.startMapId = mapId;
   system.startX = x;
@@ -317,9 +332,9 @@ export const systemToolDefinitions: ToolDefinition[] = [
     mutates: true,
     description: 'Update the game starting position',
     inputSchema: {
-      mapId: z.number().describe('Starting map ID'),
-      x: z.number().describe('Starting x tile'),
-      y: z.number().describe('Starting y tile'),
+      mapId: z.number().int().positive().describe('Starting map ID'),
+      x: z.number().int().nonnegative().describe('Starting x tile'),
+      y: z.number().int().nonnegative().describe('Starting y tile'),
     },
     handler: async (ctx, args) => {
       await updateStartingPosition(ctx.projectPath, args.mapId, args.x, args.y);
