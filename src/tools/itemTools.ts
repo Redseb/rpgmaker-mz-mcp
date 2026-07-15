@@ -124,6 +124,64 @@ export async function updateItem(
 }
 
 /**
+ * Build one new item record against the current array — the shared per-record
+ * source of truth for both `create_item` and `batch_create`. Pure record
+ * construction only (`defaultItem()` template + caller overrides + id-last); the
+ * effect reference check stays with the caller (it needs cross-file reads).
+ */
+export function buildItemRecord(existing: (Item | null)[], input: Partial<Omit<Item, 'id'>>): Item {
+  const maxId = existing.reduce((max, item) => (item && item.id > max ? item.id : max), 0);
+  return {
+    ...defaultItem(),
+    ...definedOnly(input),
+    id: maxId + 1,
+  };
+}
+
+/** Build one new weapon record against the current array (shared by create/batch). */
+export function buildWeaponRecord(
+  existing: (Weapon | null)[],
+  input: Partial<Omit<Weapon, 'id'>>,
+): Weapon {
+  const maxId = existing.reduce((max, w) => (w && w.id > max ? w.id : max), 0);
+  return {
+    ...defaultWeapon(),
+    ...definedOnly(input),
+    id: maxId + 1,
+  };
+}
+
+/** Build one new armor record against the current array (shared by create/batch). */
+export function buildArmorRecord(
+  existing: (Armor | null)[],
+  input: Partial<Omit<Armor, 'id'>>,
+): Armor {
+  const maxId = existing.reduce((max, a) => (a && a.id > max ? a.id : max), 0);
+  return {
+    ...defaultArmor(),
+    ...definedOnly(input),
+    id: maxId + 1,
+  };
+}
+
+/**
+ * Reject an item whose effects point at a non-existent state / skill / common
+ * event (P2-3: throw at author time, matching create_skill and its siblings).
+ * Shared by `create_item` and `batch_create`.
+ */
+export async function assertItemEffectRefs(projectPath: string, item: Item): Promise<void> {
+  const [states, skills, commonEvents] = await Promise.all([
+    readJsonArraySoft(getDataPath(projectPath, 'States.json')),
+    readJsonArraySoft(getDataPath(projectPath, 'Skills.json')),
+    readJsonArraySoft(getDataPath(projectPath, 'CommonEvents.json')),
+  ]);
+  const missing = firstMissingEffectRef(item.effects, { states, skills, commonEvents });
+  if (missing) {
+    throw new Error(`Cannot create item "${item.name}": ${missing}`);
+  }
+}
+
+/**
  * Create a new item. Only the fields the caller supplies override the
  * `defaultItem()` template; the computed id always wins (spread last).
  */
@@ -133,25 +191,9 @@ export async function createItem(
 ): Promise<Item> {
   const items = await getItems(projectPath);
 
-  const maxId = items.reduce((max, item) => (item && item.id > max ? item.id : max), 0);
+  const newItem = buildItemRecord(items, overrides);
 
-  const newItem: Item = {
-    ...defaultItem(),
-    ...definedOnly(overrides),
-    id: maxId + 1,
-  };
-
-  // Reject an item whose effects point at a non-existent state / skill / common
-  // event (P2-3: throw at author time, matching create_skill and its siblings).
-  const [states, skills, commonEvents] = await Promise.all([
-    readJsonArraySoft(getDataPath(projectPath, 'States.json')),
-    readJsonArraySoft(getDataPath(projectPath, 'Skills.json')),
-    readJsonArraySoft(getDataPath(projectPath, 'CommonEvents.json')),
-  ]);
-  const missing = firstMissingEffectRef(newItem.effects, { states, skills, commonEvents });
-  if (missing) {
-    throw new Error(`Cannot create item "${newItem.name}": ${missing}`);
-  }
+  await assertItemEffectRefs(projectPath, newItem);
 
   items.push(newItem);
 
@@ -170,15 +212,7 @@ export async function createWeapon(
   overrides: Partial<Omit<Weapon, 'id'>>,
 ): Promise<Weapon> {
   const weapons = await getWeapons(projectPath);
-
-  const maxId = weapons.reduce((max, w) => (w && w.id > max ? w.id : max), 0);
-
-  const newWeapon: Weapon = {
-    ...defaultWeapon(),
-    ...definedOnly(overrides),
-    id: maxId + 1,
-  };
-
+  const newWeapon = buildWeaponRecord(weapons, overrides);
   weapons.push(newWeapon);
 
   const weaponsPath = getDataPath(projectPath, 'Weapons.json');
@@ -196,15 +230,7 @@ export async function createArmor(
   overrides: Partial<Omit<Armor, 'id'>>,
 ): Promise<Armor> {
   const armors = await getArmors(projectPath);
-
-  const maxId = armors.reduce((max, a) => (a && a.id > max ? a.id : max), 0);
-
-  const newArmor: Armor = {
-    ...defaultArmor(),
-    ...definedOnly(overrides),
-    id: maxId + 1,
-  };
-
+  const newArmor = buildArmorRecord(armors, overrides);
   armors.push(newArmor);
 
   const armorsPath = getDataPath(projectPath, 'Armors.json');

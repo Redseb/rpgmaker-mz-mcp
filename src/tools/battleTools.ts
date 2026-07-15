@@ -82,7 +82,7 @@ function withTroopValidation(troop: Troop): { troop: Troop; warnings?: Validatio
  * can't emit false positives. Mirrors `characterNameWarnings` (eventPageTools) and
  * `audioNameWarnings` (eventCommandTools).
  */
-async function battlerNameWarnings(
+export async function battlerNameWarnings(
   projectPath: string,
   name: string | undefined,
 ): Promise<ValidationWarning[]> {
@@ -117,27 +117,30 @@ export async function searchEnemies(projectPath: string, searchTerm: string): Pr
 }
 
 /**
- * Create a new enemy. Only `name` is required; any omitted field falls back to
- * the editor's new-enemy default (see {@link defaultEnemy}). Allocates the next
- * unused id (max existing + 1) and writes through the commit choke point.
+ * Build one new enemy record against the current array — the shared per-record
+ * source of truth for both `create_enemy` and `batch_create`. Pure: template
+ * first, caller's defined fields next, computed id last so it always wins. Does
+ * not push, commit, or run the reference check (that needs cross-file reads).
  */
-export async function createEnemy(
-  projectPath: string,
-  overrides: Partial<Omit<Enemy, 'id'>>,
-): Promise<Enemy> {
-  const enemies = await getEnemies(projectPath);
-  const maxId = enemies.reduce((max, e) => (e && e.id > max ? e.id : max), 0);
-
-  // Template first, caller's defined fields next, computed id last so it always wins.
-  const enemy: Enemy = {
+export function buildEnemyRecord(
+  existing: (Enemy | null)[],
+  input: Partial<Omit<Enemy, 'id'>>,
+): Enemy {
+  const maxId = existing.reduce((max, e) => (e && e.id > max ? e.id : max), 0);
+  return {
     ...defaultEnemy(),
-    ...definedOnly(overrides),
+    ...definedOnly(input),
     id: maxId + 1,
   };
+}
 
-  // Reject an enemy whose actions/drops point at a non-existent db record (P2-3:
-  // throw at author time, matching create_troop's member.enemyId check). The
-  // battlerName stays a *warning* (an asset filename, not a db id).
+/**
+ * Reject an enemy whose actions/drops point at a non-existent db record (P2-3:
+ * throw at author time, matching create_troop's member.enemyId check). The
+ * battlerName stays a *warning* (an asset filename, not a db id). Shared by
+ * `create_enemy` and `batch_create`.
+ */
+export async function assertEnemyRefs(projectPath: string, enemy: Enemy): Promise<void> {
   const [skills, items, weapons, armors] = await Promise.all([
     readJsonArraySoft(getDataPath(projectPath, 'Skills.json')),
     readJsonArraySoft(getDataPath(projectPath, 'Items.json')),
@@ -148,6 +151,21 @@ export async function createEnemy(
   if (missing) {
     throw new Error(`Cannot create enemy "${enemy.name}": ${missing}`);
   }
+}
+
+/**
+ * Create a new enemy. Only `name` is required; any omitted field falls back to
+ * the editor's new-enemy default (see {@link defaultEnemy}). Allocates the next
+ * unused id (max existing + 1) and writes through the commit choke point.
+ */
+export async function createEnemy(
+  projectPath: string,
+  overrides: Partial<Omit<Enemy, 'id'>>,
+): Promise<Enemy> {
+  const enemies = await getEnemies(projectPath);
+  const enemy = buildEnemyRecord(enemies, overrides);
+
+  await assertEnemyRefs(projectPath, enemy);
 
   enemies.push(enemy);
   await commitChange(getDataPath(projectPath, 'Enemies.json'), enemies);

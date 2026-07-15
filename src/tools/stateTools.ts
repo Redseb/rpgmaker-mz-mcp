@@ -50,20 +50,29 @@ export async function getStates(projectPath: string): Promise<(State | null)[]> 
  * the editor's new-state default (see {@link defaultState}). Allocates the next
  * unused id (max existing + 1) and writes through the commit choke point.
  */
+/**
+ * Build one new state record against the current array — the shared per-record
+ * source of truth for both `create_state` and `batch_create`. Pure: template
+ * first, caller's defined fields next, computed id last so it always wins.
+ */
+export function buildStateRecord(
+  existing: (State | null)[],
+  input: Partial<Omit<State, 'id'>>,
+): State {
+  const maxId = existing.reduce((max, s) => (s && s.id > max ? s.id : max), 0);
+  return {
+    ...defaultState(),
+    ...definedOnly(input),
+    id: maxId + 1,
+  };
+}
+
 export async function createState(
   projectPath: string,
   overrides: Partial<Omit<State, 'id'>>,
 ): Promise<State> {
   const states = await getStates(projectPath);
-  const maxId = states.reduce((max, s) => (s && s.id > max ? s.id : max), 0);
-
-  // Template first, caller's defined fields next, computed id last so it always wins.
-  const state: State = {
-    ...defaultState(),
-    ...definedOnly(overrides),
-    id: maxId + 1,
-  };
-
+  const state = buildStateRecord(states, overrides);
   states.push(state);
   await commitChange(getDataPath(projectPath, 'States.json'), states);
   return state;

@@ -21,86 +21,104 @@ export async function getSkill(projectPath: string, skillId: number): Promise<Sk
   return skills.find((skill) => skill && skill.id === skillId) || null;
 }
 
+/** The caller-supplied skill shape accepted by both `create_skill` and `batch_create`. */
+export interface SkillInput {
+  name: string;
+  description?: string;
+  iconIndex?: number;
+  mpCost?: number;
+  tpCost?: number;
+  scope?: number;
+  damage?: {
+    type: number;
+    elementId: number;
+    formula: string;
+    variance?: number;
+    critical?: boolean;
+  };
+  effects?: Array<{
+    code: number;
+    dataId: number;
+    value1: number;
+    value2: number;
+  }>;
+  animationId?: number;
+  message1?: string;
+  stypeId?: number;
+}
+
 /**
- * Create a new skill
+ * Build one new skill record against the current array — the shared per-record
+ * source of truth for both `create_skill` and `batch_create`. Pure: allocates the
+ * next unused id (max existing + 1) and fills every unsupplied field with the
+ * new-skill default. Does not push or commit, and does not run the effect
+ * reference check (that needs cross-file reads) — the caller owns both.
  */
-export async function createSkill(
-  projectPath: string,
-  skillData: {
-    name: string;
-    description?: string;
-    iconIndex?: number;
-    mpCost?: number;
-    tpCost?: number;
-    scope?: number;
-    damage?: {
-      type: number;
-      elementId: number;
-      formula: string;
-      variance?: number;
-      critical?: boolean;
-    };
-    effects?: Array<{
-      code: number;
-      dataId: number;
-      value1: number;
-      value2: number;
-    }>;
-    animationId?: number;
-    message1?: string;
-    stypeId?: number;
-  },
-): Promise<Skill> {
-  const skills = await getSkills(projectPath);
+export function buildSkillRecord(existing: (Skill | null)[], input: SkillInput): Skill {
+  const maxId = existing.reduce((max, skill) => (skill && skill.id > max ? skill.id : max), 0);
 
-  // Find the next available ID
-  const maxId = skills.reduce((max, skill) => {
-    return skill && skill.id > max ? skill.id : max;
-  }, 0);
-
-  const newSkill: Skill = {
+  return {
     id: maxId + 1,
-    name: skillData.name,
-    description: skillData.description || '',
-    iconIndex: skillData.iconIndex || 64,
-    mpCost: skillData.mpCost || 0,
-    tpCost: skillData.tpCost || 0,
+    name: input.name,
+    description: input.description || '',
+    iconIndex: input.iconIndex || 64,
+    mpCost: input.mpCost || 0,
+    tpCost: input.tpCost || 0,
     tpGain: 0,
-    scope: skillData.scope || 1, // Default: enemy single
+    scope: input.scope || 1, // Default: enemy single
     occasion: 1, // Battle only
     speed: 0,
     successRate: 100,
     repeats: 1,
-    hitType: skillData.damage?.type === 1 || skillData.damage?.type === 5 ? 1 : 2,
-    animationId: skillData.animationId || 0,
+    hitType: input.damage?.type === 1 || input.damage?.type === 5 ? 1 : 2,
+    animationId: input.animationId || 0,
     damage: {
-      type: skillData.damage?.type || 0,
-      elementId: skillData.damage?.elementId || 0,
-      formula: skillData.damage?.formula || '0',
-      variance: skillData.damage?.variance !== undefined ? skillData.damage.variance : 20,
-      critical: skillData.damage?.critical !== undefined ? skillData.damage.critical : false,
+      type: input.damage?.type || 0,
+      elementId: input.damage?.elementId || 0,
+      formula: input.damage?.formula || '0',
+      variance: input.damage?.variance !== undefined ? input.damage.variance : 20,
+      critical: input.damage?.critical !== undefined ? input.damage.critical : false,
     },
-    effects: skillData.effects || [],
-    message1: skillData.message1 || '',
+    effects: input.effects || [],
+    message1: input.message1 || '',
     message2: '',
     note: '',
-    stypeId: skillData.stypeId || 1, // Default: Magic
+    stypeId: input.stypeId || 1, // Default: Magic
     requiredWtypeId1: 0,
     requiredWtypeId2: 0,
     messageType: 1,
     traits: [],
   };
+}
 
-  // Reject a skill whose effects point at a non-existent state / skill / common
-  // event (P2-3: throw at author time, like add_class_learning / create_troop).
+/**
+ * Reject a skill/item whose effects point at a non-existent state / skill /
+ * common event (P2-3: throw at author time, like add_class_learning /
+ * create_troop). Shared by `create_skill` and `batch_create`.
+ */
+export async function assertSkillEffectRefs(
+  projectPath: string,
+  skill: Skill,
+  skills: (Skill | null)[],
+): Promise<void> {
   const [states, commonEvents] = await Promise.all([
     readJsonArraySoft(getDataPath(projectPath, 'States.json')),
     readJsonArraySoft(getDataPath(projectPath, 'CommonEvents.json')),
   ]);
-  const missing = firstMissingEffectRef(newSkill.effects, { states, skills, commonEvents });
+  const missing = firstMissingEffectRef(skill.effects, { states, skills, commonEvents });
   if (missing) {
-    throw new Error(`Cannot create skill "${newSkill.name}": ${missing}`);
+    throw new Error(`Cannot create skill "${skill.name}": ${missing}`);
   }
+}
+
+/**
+ * Create a new skill
+ */
+export async function createSkill(projectPath: string, skillData: SkillInput): Promise<Skill> {
+  const skills = await getSkills(projectPath);
+  const newSkill = buildSkillRecord(skills, skillData);
+
+  await assertSkillEffectRefs(projectPath, newSkill, skills);
 
   skills.push(newSkill);
 

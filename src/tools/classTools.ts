@@ -76,26 +76,35 @@ async function findClassIndex(
   return [classes, index];
 }
 
+/** The caller-supplied class shape accepted by both `create_class` and `batch_create`. */
+export type ClassInput = { name: string; maxLevel?: number } & Partial<
+  Omit<GameClass, 'id' | 'name'>
+>;
+
+/**
+ * Build one new class record against the current array — the shared per-record
+ * source of truth for both `create_class` and `batch_create`. Pure: `maxLevel`
+ * sizes the generated param curves via {@link defaultClass}, then the caller's
+ * defined fields merge over it with the computed id last so it always wins.
+ */
+export function buildClassRecord(existing: (GameClass | null)[], input: ClassInput): GameClass {
+  const { maxLevel, ...overrides } = input;
+  const maxId = existing.reduce((max, c) => (c && c.id > max ? c.id : max), 0);
+  return {
+    ...defaultClass(maxLevel),
+    ...definedOnly(overrides),
+    id: maxId + 1,
+  };
+}
+
 /**
  * Create a new class. Only `name` is required; any omitted field falls back to the
  * editor's new-class default (see {@link defaultClass}). Allocates the next unused
  * id (max existing + 1) and writes through the commit choke point.
  */
-export async function createClass(
-  projectPath: string,
-  options: { name: string; maxLevel?: number } & Partial<Omit<GameClass, 'id' | 'name'>>,
-): Promise<GameClass> {
-  const { maxLevel, ...overrides } = options;
+export async function createClass(projectPath: string, options: ClassInput): Promise<GameClass> {
   const classes = await getClasses(projectPath);
-  const maxId = classes.reduce((max, c) => (c && c.id > max ? c.id : max), 0);
-
-  // Template first, caller's defined fields next, computed id last so it always wins.
-  const gameClass: GameClass = {
-    ...defaultClass(maxLevel),
-    ...definedOnly(overrides),
-    id: maxId + 1,
-  };
-
+  const gameClass = buildClassRecord(classes, options);
   classes.push(gameClass);
   await commitChange(getDataPath(projectPath, 'Classes.json'), classes);
   return gameClass;
@@ -179,7 +188,7 @@ export async function setClassParamCurve(
  * replaces `params` with `maxLevel` plus a per-param first/last-level preview. A
  * caller that needs the whole curve can still `get_classes`.
  */
-function summarizeClass(c: GameClass) {
+export function summarizeClass(c: GameClass) {
   const { params, ...rest } = c;
   const maxLevel = (params?.[0]?.length ?? 1) - 1;
   const paramCurves = params?.map((row, i) => ({

@@ -20,6 +20,7 @@ import { systemToolDefinitions } from './systemTools.js';
 import { assetToolDefinitions } from './assetTools.js';
 import { listToolDefinitions } from './listTools.js';
 import { validationToolDefinitions } from './validationTools.js';
+import { batchToolDefinitions } from './batchTools.js';
 
 /**
  * Every tool the server exposes, gathered from the per-domain tool modules.
@@ -48,4 +49,5 @@ export const allToolDefinitions: ToolDefinition[] = [
   ...assetToolDefinitions,
   ...listToolDefinitions,
   ...validationToolDefinitions,
+  ...batchToolDefinitions,
 ];

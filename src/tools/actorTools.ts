@@ -75,6 +75,26 @@ export async function updateActor(
 }
 
 /**
+ * Build one new actor record against the current array — the shared per-record
+ * source of truth for both `create_actor` and `batch_create`. Pure: allocates the
+ * next unused id (max existing + 1), then merges the caller's defined fields over
+ * the {@link defaultActor} template with the computed id last so it always wins.
+ * Does not push or commit — the caller owns persistence (batch pushes N records
+ * onto the same array, then writes once).
+ */
+export function buildActorRecord(
+  existing: (Actor | null)[],
+  input: Partial<Omit<Actor, 'id'>>,
+): Actor {
+  const maxId = existing.reduce((max, actor) => (actor && actor.id > max ? actor.id : max), 0);
+  return {
+    ...defaultActor(),
+    ...definedOnly(input),
+    id: maxId + 1,
+  };
+}
+
+/**
  * Create a new actor. Only `name` is required; any omitted field falls back to the
  * editor's new-actor default (see {@link defaultActor}) so the record is always
  * complete. Allocates the next unused id (max existing + 1) and writes through the
@@ -85,19 +105,7 @@ export async function createActor(
   overrides: Partial<Omit<Actor, 'id'>>,
 ): Promise<Actor> {
   const actors = await getActors(projectPath);
-
-  // Find the next available ID
-  const maxId = actors.reduce((max, actor) => {
-    return actor && actor.id > max ? actor.id : max;
-  }, 0);
-
-  // Template first, caller's defined fields next, computed id last so it always wins.
-  const newActor: Actor = {
-    ...defaultActor(),
-    ...definedOnly(overrides),
-    id: maxId + 1,
-  };
-
+  const newActor = buildActorRecord(actors, overrides);
   actors.push(newActor);
 
   const actorsPath = getDataPath(projectPath, 'Actors.json');
