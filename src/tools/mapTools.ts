@@ -18,6 +18,7 @@ import {
 } from '../utils/types.js';
 import { ToolDefinition } from '../registry.js';
 import { validateEvent, ValidationWarning } from '../validation/eventCommands.js';
+import { PreCommit, writeGate } from '../validation/gate.js';
 import { spliceIntoList } from '../events/commandBuilders.js';
 import { layeredPassability } from '../tiles/tileFlags.js';
 import { refExists } from '../validation/references.js';
@@ -27,17 +28,25 @@ const DEFAULT_MAP_WIDTH = 17;
 const DEFAULT_MAP_HEIGHT = 13;
 
 /**
- * Attach warn-by-default validation results to an event-write response. Warnings
- * are advisory: the write already happened (or was previewed); this just tells
- * the caller if the resulting event looks structurally off. Warnings are only
- * included when present, so clean writes keep a tidy `{ event }` response.
+ * The pre-commit gate every event-writing tool installs: validate the event that
+ * is *about* to be written, refuse the write outright if it is structurally
+ * malformed (unless `force`), and keep any advisory findings for the response.
+ *
+ * Reachability is folded in here rather than checked by the caller afterwards
+ * because it, too, is block-worthy — an action-button page that can never fire
+ * is a dead event, not a style note.
  */
-export function withValidation(event: MapEvent): {
-  event: MapEvent;
-  warnings?: ReturnType<typeof validateEvent>['warnings'];
-} {
-  const { warnings } = validateEvent(event);
-  return warnings.length > 0 ? { event, warnings } : { event };
+export function eventWriteGate(
+  projectPath: string,
+  mapId: number,
+  force: boolean | undefined,
+  extra: ValidationWarning[] = [],
+): ReturnType<typeof writeGate<MapEvent>> {
+  return writeGate<MapEvent>(force, `event on map ${mapId}`, async (event) => [
+    ...extra,
+    ...validateEvent(event).warnings,
+    ...(await actionButtonReachabilityWarnings(projectPath, mapId, event)),
+  ]);
 }
 
 /**
@@ -65,12 +74,17 @@ export function summarizeCreatedEvent(event: MapEvent): {
 }
 
 /**
- * Warn (never throw) when an event has an action-button page drawn with priority
- * "below characters" (0) while the event's tile is impassable. Such a page fires
- * only when the player STANDS ON the tile — impossible on a blocked cell — so the
+ * Flag an event with an action-button page drawn with priority "below
+ * characters" (0) while the event's tile is impassable. Such a page fires only
+ * when the player STANDS ON the tile — impossible on a blocked cell — so the
  * event (a !Door on a wall, an entrance trigger on a solid landmark) can never
  * fire at all. Priority "same as characters" (1) triggers from facing, which is
- * what these events want. Fails soft on any read problem (e.g. a bare fixture).
+ * what these events want.
+ *
+ * Structural (`severity: 'error'`): the event is dead on arrival, which is
+ * essentially never intended, so the write is refused unless forced. Still fails
+ * soft on any *read* problem (e.g. a bare fixture with no tileset) — an
+ * unanswerable check must never block.
  */
 export async function actionButtonReachabilityWarnings(
   projectPath: string,
@@ -101,6 +115,7 @@ export async function actionButtonReachabilityWarnings(
   return [
     {
       path: 'pages',
+      severity: 'error',
       message: `action-button page with priority "below characters" sits on an impassable tile (${event.x}, ${event.y}) — it only fires when the player stands on it, which is impossible there, so it can never trigger; use priorityType 1 (same as characters) so it fires from facing (doors, entrances, signs)`,
     },
   ];
@@ -672,6 +687,7 @@ export async function updateMapEvent(
   mapId: number,
   eventId: number,
   updates: Partial<MapEvent>,
+  precommit?: PreCommit<MapEvent>,
 ): Promise<MapEvent> {
   const map = await getMap(projectPath, mapId);
 
@@ -694,6 +710,8 @@ export async function updateMapEvent(
   }
 
   map.events[eventId] = { ...map.events[eventId]!, ...normalized, id: eventId };
+
+  await precommit?.(map.events[eventId]!);
 
   const mapPath = getMapPath(projectPath, mapId);
   await commitChange(mapPath, map);
@@ -771,6 +789,7 @@ export async function createMapEvent(
   projectPath: string,
   mapId: number,
   eventData: Omit<MapEvent, 'id' | 'pages'> & { pages?: Partial<EventPage>[] },
+  precommit?: PreCommit<MapEvent>,
 ): Promise<MapEvent> {
   const map = await getMap(projectPath, mapId);
 
@@ -790,6 +809,8 @@ export async function createMapEvent(
   };
 
   map.events[maxId + 1] = newEvent;
+
+  await precommit?.(newEvent);
 
   const mapPath = getMapPath(projectPath, mapId);
   await commitChange(mapPath, map);
@@ -898,6 +919,7 @@ export async function addEventCommand(
   pageIndex: number,
   command: EventCommand,
   position?: number,
+  precommit?: PreCommit<MapEvent>,
 ): Promise<MapEvent> {
   const map = await getMap(projectPath, mapId);
 
@@ -913,6 +935,8 @@ export async function addEventCommand(
 
   // add_event_command is the single-command case of the shared splice path.
   spliceIntoList(event.pages[pageIndex].list, [command], position);
+
+  await precommit?.(event);
 
   const mapPath = getMapPath(projectPath, mapId);
   await commitChange(mapPath, map);
@@ -1161,7 +1185,9 @@ export const mapToolDefinitions: ToolDefinition[] = [
   {
     name: 'update_map_event',
     mutates: true,
-    description: "Update a map event's properties",
+    forceable: true,
+    description:
+      "Update a map event's properties. Refuses the write (nothing is saved) if the resulting event is structurally invalid — pass force: true to override.",
     inputSchema: {
       mapId: z.number().int().positive().describe('The ID of the map'),
       eventId: z.number().int().positive().describe('The ID of the event'),
@@ -1170,19 +1196,23 @@ export const mapToolDefinitions: ToolDefinition[] = [
         .describe('Object containing event properties to update'),
     },
     handler: async (ctx, args) => {
-      const event = await updateMapEvent(ctx.projectPath, args.mapId, args.eventId, args.updates);
-      const result = withValidation(event);
-      const reach = await actionButtonReachabilityWarnings(ctx.projectPath, args.mapId, event);
-      return reach.length > 0
-        ? { ...result, warnings: [...(result.warnings ?? []), ...reach] }
-        : result;
+      const gate = eventWriteGate(ctx.projectPath, args.mapId, args.force);
+      const event = await updateMapEvent(
+        ctx.projectPath,
+        args.mapId,
+        args.eventId,
+        args.updates,
+        gate.precommit,
+      );
+      return gate.respond({ event });
     },
   },
   {
     name: 'create_map_event',
     mutates: true,
+    forceable: true,
     description:
-      'Create a new event on a map. Each page is merged onto a blank "New Event" page (trigger 0 action-button, priority 0 below characters, no graphic, empty command list, standing move type), so you only supply the fields that differ — pass e.g. `{ image: { characterName: \'Actor1\', characterIndex: 0 }, trigger: 3, list: [...] }` and the rest is filled in. Nested `image`/`conditions` deep-merge; an omitted `list` becomes a valid empty (code-0-terminated) list. Omit `pages` entirely for a bare one-page event. For the common "talking NPC" case prefer create_npc. An action-button page meant to fire from facing (doors, entrances, signs) needs `priorityType: 1` — with the default 0 (below) it only fires when stood on, so on an impassable tile it can never trigger (warned). Page fields: `image` { characterName, characterIndex, direction (2 down/4 left/6 right/8 up), pattern, tileId }, `trigger` (0 action-button/1 player-touch/2 event-touch/3 autorun/4 parallel), `priorityType` (0 below/1 same/2 above), `moveType` (0 fixed/1 random/2 approach/3 custom), `conditions`, `list`.',
+      'Create a new event on a map. Each page is merged onto a blank "New Event" page (trigger 0 action-button, priority 0 below characters, no graphic, empty command list, standing move type), so you only supply the fields that differ — pass e.g. `{ image: { characterName: \'Actor1\', characterIndex: 0 }, trigger: 3, list: [...] }` and the rest is filled in. Nested `image`/`conditions` deep-merge; an omitted `list` becomes a valid empty (code-0-terminated) list. Omit `pages` entirely for a bare one-page event. For the common "talking NPC" case prefer create_npc. An action-button page meant to fire from facing (doors, entrances, signs) needs `priorityType: 1` — with the default 0 (below) it only fires when stood on, so on an impassable tile it can never trigger (this is refused, not written; pass force: true to override). A structurally invalid command list is refused the same way. Page fields: `image` { characterName, characterIndex, direction (2 down/4 left/6 right/8 up), pattern, tileId }, `trigger` (0 action-button/1 player-touch/2 event-touch/3 autorun/4 parallel), `priorityType` (0 below/1 same/2 above), `moveType` (0 fixed/1 random/2 approach/3 custom), `conditions`, `list`.',
     inputSchema: {
       mapId: z.number().int().positive().describe('The ID of the map'),
       name: z.string().describe('Event name'),
@@ -1197,20 +1227,19 @@ export const mapToolDefinitions: ToolDefinition[] = [
         ),
     },
     handler: async (ctx, args) => {
-      const { mapId, dryRun: _dryRun, ...eventData } = args;
+      // dryRun/force are dispatcher arguments, not event fields — strip them so
+      // they can't leak into the event body via the spread below.
+      const { mapId, dryRun: _dryRun, force, ...eventData } = args;
+      const gate = eventWriteGate(ctx.projectPath, mapId, force);
       const event = await createMapEvent(
         ctx.projectPath,
         mapId,
         eventData as Omit<MapEvent, 'id' | 'pages'> & { pages?: Partial<EventPage>[] },
+        gate.precommit,
       );
-      const warnings = [
-        ...validateEvent(event).warnings,
-        ...(await actionButtonReachabilityWarnings(ctx.projectPath, mapId, event)),
-      ];
       // Return a compact summary, not the full event with every defaulted page
       // field — a huge token cost on every authoring call (re-read via get_map_event).
-      const summary = summarizeCreatedEvent(event);
-      return warnings.length > 0 ? { event: summary, warnings } : { event: summary };
+      return gate.respond({ event: summarizeCreatedEvent(event) });
     },
   },
   {
@@ -1225,7 +1254,9 @@ export const mapToolDefinitions: ToolDefinition[] = [
   {
     name: 'add_event_command',
     mutates: true,
-    description: 'Add a command to an event page',
+    forceable: true,
+    description:
+      'Add a command to an event page. Refuses the write (nothing is saved) if the resulting page is structurally invalid — e.g. the command has the wrong parameter count for its code. Pass force: true to override.',
     inputSchema: {
       mapId: z.number().int().positive().describe('The ID of the map'),
       eventId: z.number().int().positive().describe('The ID of the event'),
@@ -1244,17 +1275,19 @@ export const mapToolDefinitions: ToolDefinition[] = [
         .optional()
         .describe('Insertion index; defaults to end of the list'),
     },
-    handler: async (ctx, args) =>
-      withValidation(
-        await addEventCommand(
-          ctx.projectPath,
-          args.mapId,
-          args.eventId,
-          args.pageIndex,
-          args.command,
-          args.position,
-        ),
-      ),
+    handler: async (ctx, args) => {
+      const gate = eventWriteGate(ctx.projectPath, args.mapId, args.force);
+      const event = await addEventCommand(
+        ctx.projectPath,
+        args.mapId,
+        args.eventId,
+        args.pageIndex,
+        args.command,
+        args.position,
+        gate.precommit,
+      );
+      return gate.respond({ event });
+    },
   },
   {
     name: 'update_map',

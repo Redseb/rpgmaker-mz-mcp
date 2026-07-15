@@ -8,7 +8,8 @@ import {
   textLineWidthWarnings,
   ValidationWarning,
 } from '../validation/eventCommands.js';
-import { getMap, withValidation } from './mapTools.js';
+import { PreCommit, writeGate } from '../validation/gate.js';
+import { eventWriteGate, getMap } from './mapTools.js';
 import { getCommonEvents } from './commonEventTools.js';
 import { getTroops } from './battleTools.js';
 import {
@@ -110,6 +111,7 @@ export async function insertEventCommands(
   pageIndex: number,
   commands: EventCommand[],
   position?: number,
+  precommit?: PreCommit<MapEvent>,
 ): Promise<MapEvent> {
   const map = await getMap(projectPath, mapId);
 
@@ -123,6 +125,8 @@ export async function insertEventCommands(
   }
   spliceIntoList(event.pages[pageIndex].list, commands, position);
 
+  await precommit?.(event);
+
   await commitChange(getMapPath(projectPath, mapId), map);
   return event;
 }
@@ -133,6 +137,9 @@ export async function insertEventCommands(
  * aren't map event pages (P2-7). Both reuse the map-page EventCommand format, so
  * `validateCommandList` applies directly. Splices before the list's code-0 end
  * marker (or at `position`) and writes through the commit choke point.
+ *
+ * The resulting list is validated **before** the commit: a structurally invalid
+ * result is refused and nothing is written (unless `opts.force`).
  */
 export async function appendEventCommands(
   projectPath: string,
@@ -143,6 +150,7 @@ export async function appendEventCommands(
     pageIndex?: number;
     commands: EventCommand[];
     position?: number;
+    force?: boolean;
   },
 ): Promise<{ target: string; id: number; list: EventCommand[]; warnings?: ValidationWarning[] }> {
   if (target === 'common_event') {
@@ -154,11 +162,13 @@ export async function appendEventCommands(
     if (!ce) {
       throw new Error(`Common event ${opts.commonEventId} does not exist`);
     }
+    const gate = writeGate<EventCommand[]>(opts.force, `common event ${ce.id}`, (list) =>
+      validateCommandList(list, `common event ${ce.id}`),
+    );
     spliceIntoList(ce.list, opts.commands, opts.position);
+    await gate.precommit(ce.list);
     await commitChange(getDataPath(projectPath, 'CommonEvents.json'), commonEvents);
-    const warnings = validateCommandList(ce.list, `common event ${ce.id}`);
-    const result = { target, id: ce.id, list: ce.list };
-    return warnings.length > 0 ? { ...result, warnings } : result;
+    return gate.respond({ target, id: ce.id, list: ce.list });
   }
 
   // target === 'troop_page'
@@ -174,11 +184,14 @@ export async function appendEventCommands(
   if (!page) {
     throw new Error(`Page ${opts.pageIndex} not found on troop ${opts.troopId}`);
   }
+  const path = `troop ${troop.id} / page ${opts.pageIndex}`;
+  const gate = writeGate<EventCommand[]>(opts.force, path, (list) =>
+    validateCommandList(list, path),
+  );
   spliceIntoList(page.list, opts.commands, opts.position);
+  await gate.precommit(page.list);
   await commitChange(getDataPath(projectPath, 'Troops.json'), troops);
-  const warnings = validateCommandList(page.list, `troop ${troop.id} / page ${opts.pageIndex}`);
-  const result = { target, id: troop.id, list: page.list };
-  return warnings.length > 0 ? { ...result, warnings } : result;
+  return gate.respond({ target, id: troop.id, list: page.list });
 }
 
 /** Zod shape for a Conditional Branch condition (validated further in the builder). */
@@ -964,8 +977,9 @@ export const eventCommandToolDefinitions: ToolDefinition[] = [
   {
     name: 'insert_event_commands',
     mutates: true,
+    forceable: true,
     description:
-      'Insert a pre-built sequence of event commands (from the build_* builders) into an event page’s command list, splicing before the page’s end marker (or at `position`). The mutating companion to the read-only builders. Returns warn-by-default validation of the resulting page.',
+      'Insert a pre-built sequence of event commands (from the build_* builders) into an event page’s command list, splicing before the page’s end marker (or at `position`). The mutating companion to the read-only builders. The resulting page is validated before writing: a structural problem (wrong parameter count for a command code, a list left unterminated) refuses the write and saves nothing — pass force: true to override. Advisory findings (unrecognized code, over-long text line) are returned as `warnings` and never block.',
     inputSchema: {
       mapId: z.number().int().positive().describe('The ID of the map'),
       eventId: z.number().int().positive().describe('The ID of the event'),
@@ -981,6 +995,7 @@ export const eventCommandToolDefinitions: ToolDefinition[] = [
         .describe('Insertion index; defaults to the end of the list'),
     },
     handler: async (ctx, args) => {
+      const gate = eventWriteGate(ctx.projectPath, args.mapId, args.force);
       const event = await insertEventCommands(
         ctx.projectPath,
         args.mapId,
@@ -988,15 +1003,17 @@ export const eventCommandToolDefinitions: ToolDefinition[] = [
         args.pageIndex,
         asCommands(args.commands),
         args.position,
+        gate.precommit,
       );
-      return withValidation(event);
+      return gate.respond({ event });
     },
   },
   {
     name: 'append_event_commands',
     mutates: true,
+    forceable: true,
     description:
-      'Insert a pre-built command sequence (from the build_* builders) into a COMMON EVENT body or a TROOP battle-event page — the insert path for the two command lists that are NOT map event pages (use insert_event_commands for those). Splices before the list end marker (or at `position`). target "common_event" needs commonEventId; target "troop_page" needs troopId + pageIndex. Returns warn-by-default validation of the resulting list.',
+      'Insert a pre-built command sequence (from the build_* builders) into a COMMON EVENT body or a TROOP battle-event page — the insert path for the two command lists that are NOT map event pages (use insert_event_commands for those). Splices before the list end marker (or at `position`). target "common_event" needs commonEventId; target "troop_page" needs troopId + pageIndex. The resulting list is validated before writing: a structural problem refuses the write and saves nothing — pass force: true to override.',
     inputSchema: {
       target: z.enum(['common_event', 'troop_page']).describe('Which command list to insert into'),
       commonEventId: z
@@ -1027,6 +1044,7 @@ export const eventCommandToolDefinitions: ToolDefinition[] = [
         pageIndex: args.pageIndex,
         commands: asCommands(args.commands),
         position: args.position,
+        force: args.force,
       }),
   },
 ];

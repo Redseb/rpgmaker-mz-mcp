@@ -173,18 +173,35 @@ describe('troop tools (integration)', () => {
     await expect(updateTroop(dir, 999, { name: 'X' })).rejects.toThrow(/not found/);
   });
 
-  it('the create_troop handler surfaces page validation warnings for a bad command list', async () => {
+  it('the create_troop handler refuses a structurally bad command list and writes nothing', async () => {
     const def = battleToolDefinitions.find((t) => t.name === 'create_troop')!;
-    // A page whose list is not terminated by the code-0 end marker should warn.
+    // A page whose list is not terminated by the code-0 end marker is structural.
+    const args = {
+      name: 'Refused',
+      pages: [{ ...blankTroopPage(), list: [{ code: 101, indent: 0, parameters: [] }] }],
+    };
+    await expect(def.handler({ projectPath: dir }, args)).rejects.toThrow(/Refusing to write/);
+
+    // The whole point: the bad troop never reached disk.
+    const troops = await getTroops(dir);
+    expect(troops.every((t) => t == null || t.name !== 'Refused')).toBe(true);
+  });
+
+  it('the create_troop handler writes a structurally bad command list when forced', async () => {
+    const def = battleToolDefinitions.find((t) => t.name === 'create_troop')!;
     const result = (await def.handler(
       { projectPath: dir },
       {
-        name: 'Warned',
+        name: 'Forced',
         pages: [{ ...blankTroopPage(), list: [{ code: 101, indent: 0, parameters: [] }] }],
+        force: true,
       },
     )) as { troop: Troop; warnings?: unknown[] };
-    expect(result.troop.name).toBe('Warned');
+    expect(result.troop.name).toBe('Forced');
+    // Forcing writes it, but still reports what's wrong.
     expect(result.warnings && result.warnings.length).toBeGreaterThan(0);
+    const troops = await getTroops(dir);
+    expect(troops.some((t) => t != null && t.name === 'Forced')).toBe(true);
   });
 
   it('dry-run previews the write without touching disk', async () => {

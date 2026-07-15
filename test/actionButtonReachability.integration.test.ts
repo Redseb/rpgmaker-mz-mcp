@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, mkdir, rm, writeFile } from 'fs/promises';
+import { mkdtemp, mkdir, rm, writeFile, readFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { blankMapData, tileIndex, mapToolDefinitions } from '../src/tools/mapTools.js';
@@ -57,10 +57,25 @@ describe('action-button reachability warning (integration)', () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  it('warns on an action-button page with priority below on an impassable tile', async () => {
+  it('refuses an action-button page with priority below on an impassable tile', async () => {
+    await expect(
+      createMapEventDef.handler(
+        { projectPath: dir },
+        { mapId: 1, name: 'Door', x: 2, y: 2, pages: [doorPage(0)] },
+      ),
+    ).rejects.toThrow(/can never trigger/);
+
+    // The dead event never reached the map.
+    const map = JSON.parse(await readFile(join(dir, 'data', 'Map001.json'), 'utf-8')) as {
+      events: (MapEvent | null)[];
+    };
+    expect(map.events.every((e) => e == null || e.name !== 'Door')).toBe(true);
+  });
+
+  it('places the unreachable event anyway when forced, with the warning attached', async () => {
     const { warnings } = (await createMapEventDef.handler(
       { projectPath: dir },
-      { mapId: 1, name: 'Door', x: 2, y: 2, pages: [doorPage(0)] },
+      { mapId: 1, name: 'Door', x: 2, y: 2, pages: [doorPage(0)], force: true },
     )) as Result;
     expect(warnings?.some((w) => /can never trigger/.test(w.message))).toBe(true);
   });

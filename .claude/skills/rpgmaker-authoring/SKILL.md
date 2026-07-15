@@ -17,7 +17,19 @@ enforce, distilled from real playtests. Read it before/while building a game.
 transparent tile with nothing beneath it, an NPC with no sprite, a `battlerName` that
 doesn't exist, a transfer placed on the wrong tile, a class that always misses. **The
 only way to know the game is good is to open it in the RPG Maker editor and play it.**
-Treat "validators clean" as necessary, never sufficient. When you finish a chunk,
+Treat "validators clean" as necessary, never sufficient.
+
+The flip side: the event-writing tools **refuse** a write whose result is structurally
+broken (wrong parameter count for a command code, a `list` missing its `{ code: 0 }`
+terminator, an action-button event stranded on an impassable tile) — the tool errors
+and nothing is saved. That error is a real bug in what you were about to write: **fix
+the input.** `force: true` writes it anyway and exists for the rare case where the
+validator is wrong (an exotic plugin, a deliberate experiment) — reaching for it to
+make an error go away just puts the broken data on disk, which is what the refusal
+saved you from. Advisory findings (unknown command code, unknown asset name, long text
+line) still come back as `warnings` on a successful write — **heed those too.**
+
+When you finish a chunk,
 say what still needs an in-editor look.
 
 ## Tile layering — transparent overlays need a base (the #1 map mistake)
@@ -93,7 +105,9 @@ applyToAutotileKind)` — or check with `get_tile_flags`/`check_passability`.
   wall, an invisible trigger on a solid landmark) it can **never fire at all**. Any
   event the player activates by facing it — doors, entrance triggers on solid tiles,
   signs — needs `priorityType: 1` / `priority: 'same'`. (`create_npc` defaults to
-  `same`; `create_map_event` pages default to `below` — set it explicitly.)
+  `same`; `create_map_event` pages default to `below` — set it explicitly.) The write
+  tools **refuse** this combination on an impassable tile rather than placing a dead
+  event; fix the priority, don't `force` past it.
 - **Two valid transfer idioms:**
   - **Action-button, facing the landmark:** put a `trigger: action_button`,
     **priority `same`** event on the solid landmark tile (or the wall the door sits
@@ -129,12 +143,15 @@ applyToAutotileKind)` — or check with `get_tile_flags`/`check_passability`.
     deep-merges page `conditions`, so you only pass the two fields.
 - **Composition loop:** the `build_*` tools return `{ command }` or `{ commands }`;
   concatenate them into a page `list` (for `create_map_event`/`create_npc.commands`) or
-  splice with `insert_event_commands(mapId, eventId, pageIndex, commands)`. **Watch:**
-  `call_common_event` returns the **bare command object** (not wrapped in `{ command }`)
-  — unwrap the others but use its result directly.
-- **Common-event bodies and troop pages** have no `insert_event_commands` path — build
-  the fragments, concatenate, append a `{ code: 0, indent: 0, parameters: [] }`
-  terminator, and pass the whole `list` to `create_common_event`/`create_troop`.
+  splice with `insert_event_commands(mapId, eventId, pageIndex, commands)`.
+  `call_common_event` returns `{ command }` like the `build_*` tools, so it composes
+  the same way.
+- **Common-event bodies and troop pages** have their own insert path —
+  `append_event_commands(target, …)` with `target: "common_event"` (needs
+  `commonEventId`) or `"troop_page"` (needs `troopId` + `pageIndex`). Building the
+  whole `list` up front and passing it to `create_common_event`/`create_troop` also
+  works — append a `{ code: 0, indent: 0, parameters: [] }` terminator, or the write is
+  refused as unterminated.
 
 ## Database & combat correctness
 

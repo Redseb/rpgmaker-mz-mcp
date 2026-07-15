@@ -99,16 +99,29 @@ describe('common event tools (integration)', () => {
     expect(result.entries).toEqual([{ id: 1, name: 'Heal Party' }]);
   });
 
-  it('the create_common_event handler surfaces validation warnings for a bad command list', async () => {
+  it('the create_common_event handler refuses a structurally bad command list', async () => {
     const def = commonEventToolDefinitions.find((t) => t.name === 'create_common_event')!;
     expect(def.mutates).toBe(true);
-    // A list not terminated by the code-0 end marker should warn.
+    expect(def.forceable).toBe(true);
+    // A list not terminated by the code-0 end marker is structural.
+    await expect(
+      def.handler({ projectPath: dir }, { name: 'Refused', list: [{ code: 101, parameters: [] }] }),
+    ).rejects.toThrow(/Refusing to write/);
+
+    const commonEvents = await getCommonEvents(dir);
+    expect(commonEvents.every((ce) => ce == null || ce.name !== 'Refused')).toBe(true);
+  });
+
+  it('the create_common_event handler writes a bad command list when forced, still warning', async () => {
+    const def = commonEventToolDefinitions.find((t) => t.name === 'create_common_event')!;
     const result = (await def.handler(
       { projectPath: dir },
-      { name: 'Warned', list: [{ code: 101, indent: 0, parameters: [] }] },
+      { name: 'Forced', list: [{ code: 101, indent: 0, parameters: [] }], force: true },
     )) as { commonEvent: CommonEvent; warnings?: unknown[] };
-    expect(result.commonEvent.name).toBe('Warned');
+    expect(result.commonEvent.name).toBe('Forced');
     expect(result.warnings && result.warnings.length).toBeGreaterThan(0);
+    // `force` is a dispatcher argument and must not leak into the record.
+    expect('force' in result.commonEvent).toBe(false);
   });
 
   it('the call_common_event tool is read-only and returns the command', async () => {

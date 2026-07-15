@@ -4,7 +4,8 @@ import { commitChange } from '../utils/commit.js';
 import { CommonEvent, EventCommand } from '../utils/types.js';
 import { ToolDefinition } from '../registry.js';
 import { definedOnly } from '../utils/records.js';
-import { validateCommandList, ValidationWarning } from '../validation/eventCommands.js';
+import { validateCommandList } from '../validation/eventCommands.js';
+import { PreCommit, writeGate } from '../validation/gate.js';
 
 /** Command code for "Common Event" (call a common event from an event page). */
 const CALL_COMMON_EVENT_CODE = 117;
@@ -25,16 +26,17 @@ export function defaultCommonEvent(): Omit<CommonEvent, 'id'> {
 }
 
 /**
- * Attach warn-by-default validation to a common-event-write response. A common
- * event's `list` reuses the event-command format, so the same command validator
- * applies. Warnings are advisory (never block) and omitted when the list is clean.
+ * The pre-commit gate the common-event-writing tools install. A common event's
+ * `list` reuses the event-command format, so the same command validator applies
+ * — and a structurally invalid list is refused before the write rather than
+ * saved and warned about.
  */
-function withCommonEventValidation(commonEvent: CommonEvent): {
-  commonEvent: CommonEvent;
-  warnings?: ValidationWarning[];
-} {
-  const warnings = validateCommandList(commonEvent.list, `common event ${commonEvent.id}`);
-  return warnings.length > 0 ? { commonEvent, warnings } : { commonEvent };
+function commonEventWriteGate(
+  force: boolean | undefined,
+): ReturnType<typeof writeGate<CommonEvent>> {
+  return writeGate<CommonEvent>(force, 'common event', (commonEvent) =>
+    validateCommandList(commonEvent.list, `common event ${commonEvent.id}`),
+  );
 }
 
 /** Get all common events from the project (`data/CommonEvents.json`). */
@@ -51,6 +53,7 @@ export async function getCommonEvents(projectPath: string): Promise<(CommonEvent
 export async function createCommonEvent(
   projectPath: string,
   overrides: { name: string } & Partial<Omit<CommonEvent, 'id' | 'name'>>,
+  precommit?: PreCommit<CommonEvent>,
 ): Promise<CommonEvent> {
   const commonEvents = await getCommonEvents(projectPath);
   const maxId = commonEvents.reduce((max, ce) => (ce && ce.id > max ? ce.id : max), 0);
@@ -63,6 +66,9 @@ export async function createCommonEvent(
   };
 
   commonEvents.push(commonEvent);
+
+  await precommit?.(commonEvent);
+
   await commitChange(getDataPath(projectPath, 'CommonEvents.json'), commonEvents);
   return commonEvent;
 }
@@ -72,6 +78,7 @@ export async function updateCommonEvent(
   projectPath: string,
   commonEventId: number,
   updates: Partial<CommonEvent>,
+  precommit?: PreCommit<CommonEvent>,
 ): Promise<CommonEvent> {
   const commonEvents = await getCommonEvents(projectPath);
   const index = commonEvents.findIndex((ce) => ce && ce.id === commonEventId);
@@ -80,6 +87,9 @@ export async function updateCommonEvent(
   }
 
   commonEvents[index] = { ...commonEvents[index]!, ...updates, id: commonEventId };
+
+  await precommit?.(commonEvents[index]!);
+
   await commitChange(getDataPath(projectPath, 'CommonEvents.json'), commonEvents);
   return commonEvents[index]!;
 }
@@ -112,8 +122,9 @@ export const commonEventToolDefinitions: ToolDefinition[] = [
   {
     name: 'create_common_event',
     mutates: true,
+    forceable: true,
     description:
-      "Create a new common event (reusable event-command list) in data/CommonEvents.json. Only `name` is required; omitted fields use the editor's new-slot defaults (empty command list, trigger 0 = call-only, switchId 1). Allocates and returns the next unused id. Returns warn-by-default validation of the command list.",
+      "Create a new common event (reusable event-command list) in data/CommonEvents.json. Only `name` is required; omitted fields use the editor's new-slot defaults (empty command list, trigger 0 = call-only, switchId 1). Allocates and returns the next unused id. A structurally invalid command list refuses the write (nothing is saved) — pass force: true to override.",
     inputSchema: {
       name: z.string().describe('Common event name shown in the database'),
       trigger: z
@@ -132,20 +143,24 @@ export const commonEventToolDefinitions: ToolDefinition[] = [
         .describe('Event-command list { code, indent, parameters }; must end with code 0'),
     },
     handler: async (ctx, args) => {
-      const { dryRun: _dryRun, ...overrides } = args;
-      return withCommonEventValidation(
-        await createCommonEvent(
-          ctx.projectPath,
-          overrides as { name: string } & Partial<Omit<CommonEvent, 'id' | 'name'>>,
-        ),
+      // dryRun/force are dispatcher arguments, not common-event fields — strip
+      // them so they can't leak into the record via the spread below.
+      const { dryRun: _dryRun, force, ...overrides } = args;
+      const gate = commonEventWriteGate(force);
+      const commonEvent = await createCommonEvent(
+        ctx.projectPath,
+        overrides as { name: string } & Partial<Omit<CommonEvent, 'id' | 'name'>>,
+        gate.precommit,
       );
+      return gate.respond({ commonEvent });
     },
   },
   {
     name: 'update_common_event',
     mutates: true,
+    forceable: true,
     description:
-      "Update a common event's properties (shallow merge into the existing record). Use for name, trigger, switchId, or to replace the whole command list. Returns warn-by-default validation of the command list.",
+      "Update a common event's properties (shallow merge into the existing record). Use for name, trigger, switchId, or to replace the whole command list. A structurally invalid command list refuses the write (nothing is saved) — pass force: true to override.",
     inputSchema: {
       commonEventId: z.number().int().positive().describe('The ID of the common event to update'),
       updates: z
@@ -154,10 +169,16 @@ export const commonEventToolDefinitions: ToolDefinition[] = [
           'Object containing common event properties to update (name, trigger, switchId, list)',
         ),
     },
-    handler: async (ctx, args) =>
-      withCommonEventValidation(
-        await updateCommonEvent(ctx.projectPath, args.commonEventId, args.updates),
-      ),
+    handler: async (ctx, args) => {
+      const gate = commonEventWriteGate(args.force);
+      const commonEvent = await updateCommonEvent(
+        ctx.projectPath,
+        args.commonEventId,
+        args.updates,
+        gate.precommit,
+      );
+      return gate.respond({ commonEvent });
+    },
   },
   {
     name: 'call_common_event',

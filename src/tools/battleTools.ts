@@ -5,6 +5,7 @@ import { Enemy, Troop, TroopMember, TroopPage } from '../utils/types.js';
 import { ToolDefinition } from '../registry.js';
 import { definedOnly } from '../utils/records.js';
 import { validateCommandList, ValidationWarning } from '../validation/eventCommands.js';
+import { PreCommit, writeGate } from '../validation/gate.js';
 import { firstMissingEnemyRef } from '../validation/createRefs.js';
 import { assetNameWarning } from './assetTools.js';
 
@@ -60,18 +61,21 @@ export function blankTroopPage(): TroopPage {
 }
 
 /**
- * Attach warn-by-default validation to a troop-write response. A troop's pages
- * reuse the event-command `list` format, so the same command validator applies.
- * Warnings are advisory (never block) and omitted when the troop is clean.
+ * The pre-commit gate the troop-writing tools install. A troop's pages reuse the
+ * event-command `list` format, so the same command validator applies — and, as
+ * with map events, a structurally invalid page is refused before the write
+ * rather than saved and warned about.
  */
-function withTroopValidation(troop: Troop): { troop: Troop; warnings?: ValidationWarning[] } {
-  const warnings: ValidationWarning[] = [];
-  if (Array.isArray(troop.pages)) {
-    troop.pages.forEach((page, i) => {
-      warnings.push(...validateCommandList(page?.list, `troop ${troop.id} / page ${i}`));
-    });
-  }
-  return warnings.length > 0 ? { troop, warnings } : { troop };
+function troopWriteGate(force: boolean | undefined): ReturnType<typeof writeGate<Troop>> {
+  return writeGate<Troop>(force, 'troop', (troop) => {
+    const warnings: ValidationWarning[] = [];
+    if (Array.isArray(troop.pages)) {
+      troop.pages.forEach((page, i) => {
+        warnings.push(...validateCommandList(page?.list, `troop ${troop.id} / page ${i}`));
+      });
+    }
+    return warnings;
+  });
 }
 
 /**
@@ -225,11 +229,13 @@ async function assertMembersReferenceEnemies(
  * Create a new troop. `name` is required; `members` defaults to empty and `pages`
  * to a single blank battle-event page. Validates that each member references an
  * existing enemy, allocates the next unused id, and writes through the commit
- * choke point. Returns warn-by-default validation of the troop's pages.
+ * choke point. The `precommit` hook (see `validation/gate.ts`) runs on the built
+ * troop just before the write, so a structurally invalid page can refuse it.
  */
 export async function createTroop(
   projectPath: string,
   options: { name: string; members?: TroopMember[]; pages?: TroopPage[] },
+  precommit?: PreCommit<Troop>,
 ): Promise<Troop> {
   const members = options.members ?? [];
   await assertMembersReferenceEnemies(projectPath, members);
@@ -245,6 +251,9 @@ export async function createTroop(
   };
 
   troops.push(troop);
+
+  await precommit?.(troop);
+
   await commitChange(getDataPath(projectPath, 'Troops.json'), troops);
   return troop;
 }
@@ -254,6 +263,7 @@ export async function updateTroop(
   projectPath: string,
   troopId: number,
   updates: Partial<Troop>,
+  precommit?: PreCommit<Troop>,
 ): Promise<Troop> {
   const troops = await getTroops(projectPath);
   const index = troops.findIndex((t) => t && t.id === troopId);
@@ -267,6 +277,9 @@ export async function updateTroop(
   }
 
   troops[index] = merged;
+
+  await precommit?.(merged);
+
   await commitChange(getDataPath(projectPath, 'Troops.json'), troops);
   return merged;
 }
@@ -346,8 +359,9 @@ export const battleToolDefinitions: ToolDefinition[] = [
   {
     name: 'create_troop',
     mutates: true,
+    forceable: true,
     description:
-      'Create a new troop (enemy battle group) in data/Troops.json. `name` is required; `members` defaults to empty and `pages` to one blank battle-event page. Every member.enemyId must reference an existing enemy. Returns warn-by-default validation of the troop pages.',
+      'Create a new troop (enemy battle group) in data/Troops.json. `name` is required; `members` defaults to empty and `pages` to one blank battle-event page. Every member.enemyId must reference an existing enemy. A structurally invalid battle-event page refuses the write (nothing is saved) — pass force: true to override.',
     inputSchema: {
       name: z.string().describe('Troop name shown in the database'),
       members: z
@@ -359,27 +373,36 @@ export const battleToolDefinitions: ToolDefinition[] = [
         .optional()
         .describe('Battle-event pages { conditions, list, span }; defaults to one blank page'),
     },
-    handler: async (ctx, args) =>
-      withTroopValidation(
-        await createTroop(ctx.projectPath, {
+    handler: async (ctx, args) => {
+      const gate = troopWriteGate(args.force);
+      const troop = await createTroop(
+        ctx.projectPath,
+        {
           name: args.name,
           members: args.members as TroopMember[] | undefined,
           pages: args.pages as TroopPage[] | undefined,
-        }),
-      ),
+        },
+        gate.precommit,
+      );
+      return gate.respond({ troop });
+    },
   },
   {
     name: 'update_troop',
     mutates: true,
+    forceable: true,
     description:
-      "Update a troop's properties (shallow merge). If `members` is provided, each enemyId is validated to exist. Returns warn-by-default validation of the troop pages.",
+      "Update a troop's properties (shallow merge). If `members` is provided, each enemyId is validated to exist. A structurally invalid battle-event page refuses the write (nothing is saved) — pass force: true to override.",
     inputSchema: {
       troopId: z.number().int().positive().describe('The ID of the troop to update'),
       updates: z
         .record(z.string(), z.unknown())
         .describe('Object containing troop properties to update (name, members, pages)'),
     },
-    handler: async (ctx, args) =>
-      withTroopValidation(await updateTroop(ctx.projectPath, args.troopId, args.updates)),
+    handler: async (ctx, args) => {
+      const gate = troopWriteGate(args.force);
+      const troop = await updateTroop(ctx.projectPath, args.troopId, args.updates, gate.precommit);
+      return gate.respond({ troop });
+    },
   },
 ];

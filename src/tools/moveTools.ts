@@ -4,7 +4,8 @@ import { commitChange } from '../utils/commit.js';
 import { MapData, MapEvent, EventCommand, MoveCommand, MoveRoute } from '../utils/types.js';
 import { ToolDefinition } from '../registry.js';
 import { validateMoveRoute } from '../validation/moveCommands.js';
-import { validateEvent, ValidationWarning } from '../validation/eventCommands.js';
+import { validateEvent } from '../validation/eventCommands.js';
+import { PreCommit, writeGate } from '../validation/gate.js';
 
 /** Event command code for "Set Movement Route" (force a character along a route). */
 const SET_MOVEMENT_ROUTE_CODE = 205;
@@ -168,6 +169,7 @@ export async function setMovementRoute(
   route: MoveRoute,
   indent = 0,
   position?: number,
+  precommit?: PreCommit<MapEvent>,
 ): Promise<MapEvent> {
   const map = await getMap(projectPath, mapId);
 
@@ -188,20 +190,25 @@ export async function setMovementRoute(
       : commandList.length - 1; // before the end-of-list command (code 0)
   commandList.splice(insertAt, 0, ...commands);
 
+  await precommit?.(event);
+
   await commitChange(getMapPath(projectPath, mapId), map);
   return event;
 }
 
-/** Combine move-route warnings with the resulting event's command-list warnings. */
-function withMoveValidation(
-  event: MapEvent,
+/**
+ * The pre-commit gate `set_movement_route` installs: the move route's own
+ * findings plus the resulting page's, with a structural problem in either
+ * refusing the write before it happens.
+ */
+function moveWriteGate(
+  force: boolean | undefined,
   route: MoveRoute,
-): { event: MapEvent; warnings?: ValidationWarning[] } {
-  const warnings = [
+): ReturnType<typeof writeGate<MapEvent>> {
+  return writeGate<MapEvent>(force, 'movement route', (event) => [
     ...validateMoveRoute(route, `event ${event.id} move route`),
     ...validateEvent(event).warnings,
-  ];
-  return warnings.length > 0 ? { event, warnings } : { event };
+  ]);
 }
 
 /** Zod shape for a raw move command (parameters optional; defaulted to []). */
@@ -263,8 +270,9 @@ export const moveToolDefinitions: ToolDefinition[] = [
   {
     name: 'set_movement_route',
     mutates: true,
+    forceable: true,
     description:
-      'Insert a forced "Set Movement Route" (event command 205, plus the 505 continuation rows the editor expects) into an event page’s command list, moving a character as part of that page. characterId: -1 player, 0 this event, N event id. Pass a moveRoute from create_move_route. Returns warn-by-default validation.',
+      'Insert a forced "Set Movement Route" (event command 205, plus the 505 continuation rows the editor expects) into an event page’s command list, moving a character as part of that page. characterId: -1 player, 0 this event, N event id. Pass a moveRoute from create_move_route. A structurally invalid route or page refuses the write (nothing is saved) — pass force: true to override.',
     inputSchema: {
       mapId: z.number().int().positive().describe('The ID of the map'),
       eventId: z.number().int().positive().describe('The ID of the event'),
@@ -284,6 +292,7 @@ export const moveToolDefinitions: ToolDefinition[] = [
     },
     handler: async (ctx, args) => {
       const route = args.moveRoute as MoveRoute;
+      const gate = moveWriteGate(args.force, route);
       const event = await setMovementRoute(
         ctx.projectPath,
         args.mapId,
@@ -293,8 +302,9 @@ export const moveToolDefinitions: ToolDefinition[] = [
         route,
         args.indent ?? 0,
         args.position,
+        gate.precommit,
       );
-      return withMoveValidation(event, route);
+      return gate.respond({ event });
     },
   },
 ];

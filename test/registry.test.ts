@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
-import { buildRegistry, schemaFor, DRY_RUN_SHAPE, ToolDefinition } from '../src/registry.js';
+import {
+  buildRegistry,
+  schemaFor,
+  DRY_RUN_SHAPE,
+  FORCE_SHAPE,
+  ToolDefinition,
+} from '../src/registry.js';
 import { allToolDefinitions } from '../src/tools/allTools.js';
 
 const dummy: ToolDefinition = {
@@ -32,6 +38,26 @@ describe('schemaFor', () => {
     const shape = schemaFor(mutating);
     expect(Object.keys(shape).sort()).toEqual(['dryRun', 'x']);
     expect(shape.dryRun).toBe(DRY_RUN_SHAPE.dryRun);
+  });
+
+  it('folds `force` only into mutating tools that gate on validation', () => {
+    // A mutating tool that never refuses a write must not advertise `force` —
+    // the argument would do nothing.
+    const plain: ToolDefinition = { ...dummy, mutates: true, inputSchema: { x: z.number() } };
+    expect('force' in schemaFor(plain)).toBe(false);
+
+    const gated: ToolDefinition = { ...plain, forceable: true };
+    const shape = schemaFor(gated);
+    expect(Object.keys(shape).sort()).toEqual(['dryRun', 'force', 'x']);
+    expect(shape.force).toBe(FORCE_SHAPE.force);
+  });
+
+  it('never marks a read-only tool forceable', () => {
+    for (const tool of allToolDefinitions) {
+      if (tool.forceable) {
+        expect(tool.mutates, `${tool.name} is forceable but not mutating`).toBe(true);
+      }
+    }
   });
 });
 

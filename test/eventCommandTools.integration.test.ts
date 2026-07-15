@@ -297,13 +297,30 @@ describe('insert_event_commands (integration)', () => {
     expect(result.event.pages[0].list.map((c) => c.code)).toEqual([221, 249, 231, 212, 201, 0]);
   });
 
-  it('surfaces validation warnings for a malformed inserted command', async () => {
+  it('refuses a malformed inserted command and leaves the page untouched', async () => {
     // A 401 line with the wrong arity trips the arity check on the resulting page.
+    const args = { mapId: 1, eventId: 1, pageIndex: 0, commands: [{ code: 401, parameters: [] }] };
+    await expect(get('insert_event_commands').handler({ projectPath: dir }, args)).rejects.toThrow(
+      /Refusing to write/,
+    );
+
+    const map = JSON.parse(await readFile(join(dir, 'data', 'Map001.json'), 'utf-8')) as MapData;
+    expect(map.events[1]!.pages[0].list.some((c) => c.code === 401)).toBe(false);
+  });
+
+  it('inserts a malformed command when forced, reporting the problem', async () => {
     const result = (await get('insert_event_commands').handler(
       { projectPath: dir },
-      { mapId: 1, eventId: 1, pageIndex: 0, commands: [{ code: 401, parameters: [] }] },
+      {
+        mapId: 1,
+        eventId: 1,
+        pageIndex: 0,
+        commands: [{ code: 401, parameters: [] }],
+        force: true,
+      },
     )) as { event: MapEvent; warnings?: unknown[] };
     expect(result.warnings && result.warnings.length).toBeGreaterThan(0);
+    expect(result.event.pages[0].list.some((c) => c.code === 401)).toBe(true);
   });
 
   it('rejects an unknown event or page', async () => {
@@ -322,8 +339,24 @@ describe('insert_event_commands (integration)', () => {
     expect(map.events[1]!.pages[0].list.map((c) => c.code)).toEqual([0]);
   });
 
-  it('is marked as mutating', () => {
+  it('a dry-run of a structurally bad write fails the same way the real write does', async () => {
+    // The gate runs before commitChange, so a preview can't report a write that
+    // would in fact be refused — it throws too.
+    const context: CommitContext = { dryRun: true, commits: [] };
+    await commitStore.run(context, async () => {
+      await expect(
+        get('insert_event_commands').handler(
+          { projectPath: dir },
+          { mapId: 1, eventId: 1, pageIndex: 0, commands: [{ code: 401, parameters: [] }] },
+        ),
+      ).rejects.toThrow(/Refusing to write/);
+    });
+    expect(context.commits).toEqual([]);
+  });
+
+  it('is marked as mutating and forceable', () => {
     expect(get('insert_event_commands').mutates).toBe(true);
+    expect(get('insert_event_commands').forceable).toBe(true);
   });
 });
 

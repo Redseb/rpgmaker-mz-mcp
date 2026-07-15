@@ -76,21 +76,28 @@ export function validateMoveCommand(command: MoveCommand, path: string): Validat
   const warnings: ValidationWarning[] = [];
 
   if (typeof command?.code !== 'number') {
-    warnings.push({ path, message: 'move command is missing a numeric `code`' });
+    warnings.push({ path, message: 'move command is missing a numeric `code`', severity: 'error' });
     return warnings;
   }
 
   if (!Array.isArray(command.parameters)) {
-    warnings.push({ path, code: command.code, message: '`parameters` is not an array' });
+    warnings.push({
+      path,
+      code: command.code,
+      message: '`parameters` is not an array',
+      severity: 'error',
+    });
     return warnings;
   }
 
   const spec = KNOWN_MOVE_COMMANDS[command.code];
   if (!spec) {
+    // Advisory, for the same reason as an unrecognized event command code.
     warnings.push({
       path,
       code: command.code,
       message: `unrecognized move command code ${command.code} (may be a plugin move command)`,
+      severity: 'warning',
     });
     return warnings;
   }
@@ -101,6 +108,7 @@ export function validateMoveCommand(command: MoveCommand, path: string): Validat
       path,
       code: command.code,
       message: `${spec.name}: expected ${expected} parameter(s), got ${command.parameters.length}`,
+      severity: 'error',
     });
   }
 
@@ -110,14 +118,15 @@ export function validateMoveCommand(command: MoveCommand, path: string): Validat
 /**
  * Validate a move route (the object command 205 carries, or an event page's
  * autonomous `moveRoute`). Checks that `list` is an array terminated by the
- * Route-End marker (code 0), then validates each move command. Warn-by-default:
- * nothing throws.
+ * Route-End marker (code 0), then validates each move command. Never throws —
+ * findings are returned and classified by `severity`; it's the mutating tools
+ * that decide to refuse a write (see `validation/gate.ts`).
  */
 export function validateMoveRoute(route: unknown, path = 'move route'): ValidationWarning[] {
   const warnings: ValidationWarning[] = [];
 
   if (!route || typeof route !== 'object' || !Array.isArray((route as MoveRoute).list)) {
-    warnings.push({ path, message: 'move route has no `list` array' });
+    warnings.push({ path, message: 'move route has no `list` array', severity: 'error' });
     return warnings;
   }
 
@@ -126,6 +135,7 @@ export function validateMoveRoute(route: unknown, path = 'move route'): Validati
     warnings.push({
       path,
       message: 'move route should end with a Route-End command (code 0)',
+      severity: 'error',
     });
   }
 

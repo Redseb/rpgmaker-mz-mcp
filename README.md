@@ -37,7 +37,7 @@ Then point any MCP client at `dist/index.js` (see [Configuration](#configuration
 - [Usage](#usage)
 - [Available tools](#available-tools)
 - [Input validation](#input-validation)
-- [Event validation (warn-by-default)](#event-validation-warn-by-default)
+- [Event validation (throw-by-default)](#event-validation-throw-by-default)
 - [Reference linting](#reference-linting)
 - [Dry-run preview](#dry-run-preview)
 - [Custom-tileset catalog skill](#custom-tileset-catalog-skill)
@@ -57,7 +57,7 @@ Then point any MCP client at `dist/index.js` (see [Configuration](#configuration
 - **Event-command builders** — high-level, read-only builders that emit the exact `EventCommand` sequences the editor writes (including tricky recursive branch blocks and continuation rows), landed on a page via `insert_event_commands`. Covers dialogue & flow, game-state changes, presentation/transitions, and scene processing.
 - **Event & NPC ergonomics** — `create_npc` places a complete talking NPC in one call; `set_event_page` merges a page's graphic + behavior in place.
 - **Asset awareness** — `list_assets` enumerates valid character/face/tileset/audio names so events never reference a missing file.
-- **Correctness layer** — Zod-validated inputs, warn-by-default event validation, a cross-file reference linter (`validate_references`), and a dry-run/diff preview on every write.
+- **Correctness layer** — Zod-validated inputs, throw-by-default event validation (a structurally invalid write is refused, not saved-and-warned-about), a cross-file reference linter (`validate_references`), and a dry-run/diff preview on every write.
 
 ## How it fits together
 
@@ -114,7 +114,7 @@ Add to your Claude Desktop configuration file (`%APPDATA%\Claude\claude_desktop_
 
 ## Available tools
 
-All 123 tools, grouped by area. Tools that write to the project accept an optional `dryRun` argument (see [Dry-run preview](#dry-run-preview)).
+All 123 tools, grouped by area. Tools that write to the project accept an optional `dryRun` argument (see [Dry-run preview](#dry-run-preview)); those that can refuse a structurally invalid write also accept `force` (see [Event validation](#event-validation-throw-by-default)).
 
 <details>
 <summary><strong>Expand the full tool reference</strong></summary>
@@ -240,14 +240,16 @@ Read-only builders that return editor-faithful `EventCommand` sequences; land th
 
 Every tool declares its arguments as a [Zod](https://zod.dev) schema. The server (built on the MCP SDK's high-level `McpServer`) validates incoming arguments against that schema **before** a handler runs, so malformed calls are rejected with a clear `Input validation error` naming the offending field instead of writing garbage to disk.
 
-## Event validation (warn-by-default)
+## Event validation (throw-by-default)
 
-Event command lists are checked against a table of known RPG Maker MZ command codes (`101` Show Text, `201` Transfer Player, `122` Control Variables, …). Validation is **advisory** — it never blocks a write:
+Event command lists are checked against a table of known RPG Maker MZ command codes (`101` Show Text, `201` Transfer Player, `122` Control Variables, …). Findings come in two tiers, and the tier decides what happens to the write:
 
-- `validate_event` / `validate_project` report problems without changing anything.
-- The event-writing tools echo any warnings for the resulting event alongside their normal response.
+- **Structural** — a wrong parameter count for a known command, a list not terminated by the code-`0` end marker, a non-array `parameters`, or an action-button event stranded on an impassable tile. These are almost always bugs, so the event-writing tools **validate the would-be result before committing and refuse the write**: the tool errors and *nothing reaches disk*. Pass `force: true` to write anyway (the argument is advertised on exactly the tools that can refuse).
+- **Advisory** — an unrecognized command code (which may simply be a plugin command), an over-long text line, an unknown asset filename. These are legitimately possible, so they never block; they ride along as `warnings` on the normal response.
 
-Warnings flag things like a wrong parameter count for a known command, a list not terminated by the code-`0` end marker, or an unrecognized command code (which may simply be a plugin command — hence a warning, not an error).
+Because the check runs *before* the commit, a `dryRun` of a write that would be refused fails too, rather than previewing a write that could never happen.
+
+`validate_event` / `validate_project` remain read-only audits: they report both tiers (each finding carries a `severity`) without changing anything.
 
 ## Reference linting
 

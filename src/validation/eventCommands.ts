@@ -1,15 +1,31 @@
 import { EventCommand, MapEvent } from '../utils/types.js';
 
 /**
- * A single non-fatal validation finding. Validation is warn-by-default: findings
- * never block a write, they just tell the caller something looks off (a wrong
- * parameter count, an unterminated command list, an unrecognized command code —
- * which may simply be a plugin command).
+ * How seriously a finding should be taken.
+ *
+ * - `'error'` — **structural**: the data is malformed in a way that is almost
+ *   always a bug (wrong parameter arity, an unterminated command list, a
+ *   non-array `parameters`). Mutating tools refuse to write these by default;
+ *   see `assertWritable` in `./gate.js`.
+ * - `'warning'` — **advisory**: something looks off but is legitimately possible
+ *   (an unrecognized command code may be a plugin command; an over-long text
+ *   line is ugly, not broken). Never blocks a write.
+ *
+ * An absent `severity` means advisory — so a finding from a validator that
+ * doesn't classify (asset names, references, transparency) can never block.
+ */
+export type Severity = 'error' | 'warning';
+
+/**
+ * A single validation finding. `severity` decides whether it blocks a write:
+ * structural findings ('error') refuse the write unless the caller passes
+ * `force: true`; everything else is advisory and merely reported.
  */
 export interface ValidationWarning {
   path: string;
   code?: number;
   message: string;
+  severity?: Severity;
 }
 
 export interface ValidationReport {
@@ -190,28 +206,41 @@ export function validateCommand(command: EventCommand, path: string): Validation
   const warnings: ValidationWarning[] = [];
 
   if (typeof command?.code !== 'number') {
-    warnings.push({ path, message: 'command is missing a numeric `code`' });
+    warnings.push({ path, message: 'command is missing a numeric `code`', severity: 'error' });
     return warnings;
   }
 
   if (!Array.isArray(command.parameters)) {
-    warnings.push({ path, code: command.code, message: '`parameters` is not an array' });
+    warnings.push({
+      path,
+      code: command.code,
+      message: '`parameters` is not an array',
+      severity: 'error',
+    });
     return warnings;
   }
 
   const spec = KNOWN_COMMANDS[command.code];
   if (!spec) {
+    // Advisory: KNOWN_COMMANDS is curated, not exhaustive, and plugins are free
+    // to introduce their own codes — blocking here would fail valid writes.
     warnings.push({
       path,
       code: command.code,
       message: `unrecognized command code ${command.code} (may be a plugin command)`,
+      severity: 'warning',
     });
     return warnings;
   }
 
   const problem = spec.check?.(command.parameters);
   if (problem) {
-    warnings.push({ path, code: command.code, message: `${spec.name}: ${problem}` });
+    warnings.push({
+      path,
+      code: command.code,
+      message: `${spec.name}: ${problem}`,
+      severity: 'error',
+    });
   }
 
   return warnings;
@@ -249,6 +278,9 @@ export function textLineWidthWarnings(list: EventCommand[], path: string): Valid
         warnings.push({
           path: `${path} / command ${i}`,
           code: 401,
+          // Advisory: the line budget is an estimate (fonts and window widths are
+          // configurable), and an over-long line still runs.
+          severity: 'warning',
           message: `Show Text line is ${length} visible chars but the message window fits ~${limit}${faceShown ? ' with a face shown' : ''} — MZ does not word-wrap, the end will be cut off; split it into shorter 401 lines`,
         });
       }
@@ -266,7 +298,7 @@ export function validateCommandList(list: unknown, path: string): ValidationWarn
   const warnings: ValidationWarning[] = [];
 
   if (!Array.isArray(list)) {
-    warnings.push({ path, message: 'command list is not an array' });
+    warnings.push({ path, message: 'command list is not an array', severity: 'error' });
     return warnings;
   }
 
@@ -274,6 +306,7 @@ export function validateCommandList(list: unknown, path: string): ValidationWarn
     warnings.push({
       path,
       message: 'command list should end with an end-of-list command (code 0)',
+      severity: 'error',
     });
   }
 
@@ -291,7 +324,7 @@ export function validateEvent(event: MapEvent, path = `event ${event?.id}`): Val
   const warnings: ValidationWarning[] = [];
 
   if (!event || !Array.isArray(event.pages)) {
-    warnings.push({ path, message: 'event has no `pages` array' });
+    warnings.push({ path, message: 'event has no `pages` array', severity: 'error' });
     return { ok: warnings.length === 0, warnings };
   }
 

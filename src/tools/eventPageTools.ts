@@ -6,10 +6,11 @@ import { ToolDefinition } from '../registry.js';
 import {
   createMapEvent,
   blankEventPage,
-  actionButtonReachabilityWarnings,
+  eventWriteGate,
   summarizeCreatedEvent,
 } from './mapTools.js';
-import { validateEvent, ValidationWarning } from '../validation/eventCommands.js';
+import { ValidationWarning } from '../validation/eventCommands.js';
+import { PreCommit } from '../validation/gate.js';
 import {
   showText,
   ShowTextOptions,
@@ -122,6 +123,7 @@ export async function setEventPage(
   eventId: number,
   pageIndex: number,
   updates: EventPageUpdates,
+  precommit?: PreCommit<MapEvent>,
 ): Promise<MapEvent> {
   const map = await getMap(projectPath, mapId);
 
@@ -146,6 +148,8 @@ export async function setEventPage(
   if (updates.moveSpeed !== undefined) page.moveSpeed = updates.moveSpeed;
   if (updates.moveFrequency !== undefined) page.moveFrequency = updates.moveFrequency;
   if (updates.moveRoute !== undefined) page.moveRoute = updates.moveRoute;
+
+  await precommit?.(event);
 
   await commitChange(getMapPath(projectPath, mapId), map);
   return event;
@@ -205,6 +209,7 @@ export async function createNpc(
   y: number,
   name: string,
   options: CreateNpcOptions = {},
+  precommit?: PreCommit<MapEvent>,
 ): Promise<MapEvent> {
   const hasGraphic = !!options.characterName;
   const page = blankEventPage();
@@ -230,7 +235,12 @@ export async function createNpc(
     page.list = terminated(showText(options.text, textOptions));
   }
 
-  return await createMapEvent(projectPath, mapId, { name, note: '', x, y, pages: [page] });
+  return await createMapEvent(
+    projectPath,
+    mapId,
+    { name, note: '', x, y, pages: [page] },
+    precommit,
+  );
 }
 
 // --- One-shot idiom builders: chests & transfers ----------------------------
@@ -293,6 +303,7 @@ export async function createChest(
   y: number,
   kind: ChestKind,
   options: CreateChestOptions = {},
+  precommit?: PreCommit<MapEvent>,
 ): Promise<MapEvent> {
   const amount = options.amount ?? 1;
   const id = options.id ?? 0;
@@ -351,13 +362,18 @@ export async function createChest(
   openedPage.trigger = TRIGGER_CODE.action_button;
   openedPage.priorityType = PRIORITY_CODE.same;
 
-  return await createMapEvent(projectPath, mapId, {
-    name: options.name ?? 'Chest',
-    note: '',
-    x,
-    y,
-    pages: [closedPage, openedPage],
-  });
+  return await createMapEvent(
+    projectPath,
+    mapId,
+    {
+      name: options.name ?? 'Chest',
+      note: '',
+      x,
+      y,
+      pages: [closedPage, openedPage],
+    },
+    precommit,
+  );
 }
 
 /** How the player activates a transfer event. */
@@ -393,6 +409,7 @@ export async function createTransfer(
   targetX: number,
   targetY: number,
   options: CreateTransferOptions = {},
+  precommit?: PreCommit<MapEvent>,
 ): Promise<{ event: MapEvent; warnings: ValidationWarning[] }> {
   const mapInfos = await readJsonArraySoft(getDataPath(projectPath, 'MapInfos.json'));
   if (mapInfos.length > 0 && !refExists(mapInfos, targetMapId)) {
@@ -435,32 +452,29 @@ export async function createTransfer(
     }),
   ]);
 
-  const event = await createMapEvent(projectPath, mapId, {
-    name: options.name ?? 'Transfer',
-    note: '',
-    x,
-    y,
-    pages: [page],
-  });
+  const event = await createMapEvent(
+    projectPath,
+    mapId,
+    {
+      name: options.name ?? 'Transfer',
+      note: '',
+      x,
+      y,
+      pages: [page],
+    },
+    precommit,
+  );
 
   return { event, warnings };
-}
-
-/** Build the warn-by-default response for an event write, merging extra warnings. */
-function withValidation(
-  event: MapEvent,
-  extra: ValidationWarning[] = [],
-): { event: MapEvent; warnings?: ValidationWarning[] } {
-  const warnings = [...extra, ...validateEvent(event).warnings];
-  return warnings.length > 0 ? { event, warnings } : { event };
 }
 
 export const eventPageToolDefinitions: ToolDefinition[] = [
   {
     name: 'set_event_page',
     mutates: true,
+    forceable: true,
     description:
-      "Update an existing event page's graphic and behavior in one call, without rebuilding the whole page or touching its command list: sprite (characterName/characterIndex/direction/pattern or a tileId), trigger, priority, movement (type/speed/frequency/route), and the through/walkAnime/stepAnime/directionFix flags. Graphic fields merge onto the current image; warns (never blocks) on an unknown characterName.",
+      "Update an existing event page's graphic and behavior in one call, without rebuilding the whole page or touching its command list: sprite (characterName/characterIndex/direction/pattern or a tileId), trigger, priority, movement (type/speed/frequency/route), and the through/walkAnime/stepAnime/directionFix flags. Graphic fields merge onto the current image; warns (never blocks) on an unknown characterName. Refuses the write if the change would leave the event unreachable (an action-button page with priority `below` on an impassable tile) — pass force: true to override.",
     inputSchema: {
       mapId: z.number().int().positive().describe('The ID of the map'),
       eventId: z.number().int().positive().describe('The ID of the event'),
@@ -529,20 +543,27 @@ export const eventPageToolDefinitions: ToolDefinition[] = [
         moveRoute: args.moveRoute as MoveRoute | undefined,
       };
 
+      const gate = eventWriteGate(
+        ctx.projectPath,
+        args.mapId,
+        args.force,
+        await characterNameWarnings(ctx.projectPath, args.characterName),
+      );
       const event = await setEventPage(
         ctx.projectPath,
         args.mapId,
         args.eventId,
         args.pageIndex,
         updates,
+        gate.precommit,
       );
-      const warnings = await characterNameWarnings(ctx.projectPath, args.characterName);
-      return withValidation(event, warnings);
+      return gate.respond({ event });
     },
   },
   {
     name: 'create_npc',
     mutates: true,
+    forceable: true,
     description:
       'Create a complete, placed NPC event on a map in one call — a graphic + trigger + a talk list. Provide `text` (built into a Show Text sequence, with optional face/speaker) or an explicit `commands` array (commands wins if both given). Defaults to a solid, action-button NPC facing down. Warns (never blocks) on an unknown characterName, and on NO graphic at all (an NPC with no characterName is invisible in-game — use create_map_event for an intentionally-invisible trigger). The one-shot "make a talking NPC that says X" primitive.',
     inputSchema: {
@@ -613,6 +634,10 @@ export const eventPageToolDefinitions: ToolDefinition[] = [
           args.priority !== undefined ? PRIORITY_CODE[args.priority as PriorityName] : undefined,
         through: args.through,
       };
+      const gate = eventWriteGate(ctx.projectPath, args.mapId, args.force, [
+        ...missingGraphicWarnings(args.characterName),
+        ...(await characterNameWarnings(ctx.projectPath, args.characterName)),
+      ]);
       const event = await createNpc(
         ctx.projectPath,
         args.mapId,
@@ -620,22 +645,17 @@ export const eventPageToolDefinitions: ToolDefinition[] = [
         args.y,
         args.name,
         options,
+        gate.precommit,
       );
-      const warnings = [
-        ...missingGraphicWarnings(args.characterName),
-        ...(await characterNameWarnings(ctx.projectPath, args.characterName)),
-        ...(await actionButtonReachabilityWarnings(ctx.projectPath, args.mapId, event)),
-        ...validateEvent(event).warnings,
-      ];
       // Return a compact summary, not the full event with every defaulted page
       // field — a huge token cost on every NPC (re-read via get_map_event).
-      const summary = summarizeCreatedEvent(event);
-      return warnings.length > 0 ? { event: summary, warnings } : { event: summary };
+      return gate.respond({ event: summarizeCreatedEvent(event) });
     },
   },
   {
     name: 'create_chest',
     mutates: true,
+    forceable: true,
     description:
       'Create a complete, placed treasure chest on a map in one call — the two-page self-switch idiom done correctly, so the chest can never be looted twice. Page 1 (closed) is an action-button, priority-`same` event that optionally shows `text`, gives the contents, then flips its self switch; page 2 (opened) is gated on that self switch, shows the opened graphic and does nothing. `kind` picks the payout: item/weapon/armor (needs `id`) or gold. On the RTP `!Chest` sheet the open/closed states are the *direction* rows of one character block (down = closed, up = open), which is what closedDirection/openedDirection default to. Throws if the item/weapon/armor `id` does not exist; warns (never blocks) on an unknown characterName or a chest with no graphic.',
     inputSchema: {
@@ -703,6 +723,10 @@ export const eventPageToolDefinitions: ToolDefinition[] = [
         text: args.text as string[] | undefined,
         selfSwitch: args.selfSwitch as 'A' | 'B' | 'C' | 'D' | undefined,
       };
+      const gate = eventWriteGate(ctx.projectPath, args.mapId, args.force, [
+        ...missingGraphicWarnings(args.characterName),
+        ...(await characterNameWarnings(ctx.projectPath, args.characterName)),
+      ]);
       const event = await createChest(
         ctx.projectPath,
         args.mapId,
@@ -710,20 +734,15 @@ export const eventPageToolDefinitions: ToolDefinition[] = [
         args.y,
         args.kind as ChestKind,
         options,
+        gate.precommit,
       );
-      const warnings = [
-        ...missingGraphicWarnings(args.characterName),
-        ...(await characterNameWarnings(ctx.projectPath, args.characterName)),
-        ...(await actionButtonReachabilityWarnings(ctx.projectPath, args.mapId, event)),
-        ...validateEvent(event).warnings,
-      ];
-      const summary = summarizeCreatedEvent(event);
-      return warnings.length > 0 ? { event: summary, warnings } : { event: summary };
+      return gate.respond({ event: summarizeCreatedEvent(event) });
     },
   },
   {
     name: 'create_transfer',
     mutates: true,
+    forceable: true,
     description:
       'Create a complete, placed map-transfer event in one call, using whichever of the two working idioms you pick. `idiom: "action_button"` (default) makes a priority-`same` event the player faces and presses — the right shape for a solid landmark (building, dungeon mouth, door); `idiom: "player_touch"` makes an invisible priority-`below` doormat the player walks onto — for interior exits and map-edge gaps. `direction` is the facing the player lands with, `fade` the screen transition. Throws if the destination map does not exist; warns if the destination tile is outside that map, if the characterName is unknown, or if the event can never fire from where it sits.',
     inputSchema: {
@@ -763,6 +782,12 @@ export const eventPageToolDefinitions: ToolDefinition[] = [
         characterName: args.characterName,
         characterIndex: args.characterIndex,
       };
+      const gate = eventWriteGate(
+        ctx.projectPath,
+        args.mapId,
+        args.force,
+        await characterNameWarnings(ctx.projectPath, args.characterName),
+      );
       const { event, warnings: transferWarnings } = await createTransfer(
         ctx.projectPath,
         args.mapId,
@@ -772,15 +797,12 @@ export const eventPageToolDefinitions: ToolDefinition[] = [
         args.targetX,
         args.targetY,
         options,
+        gate.precommit,
       );
-      const warnings = [
-        ...transferWarnings,
-        ...(await characterNameWarnings(ctx.projectPath, args.characterName)),
-        ...(await actionButtonReachabilityWarnings(ctx.projectPath, args.mapId, event)),
-        ...validateEvent(event).warnings,
-      ];
-      const summary = summarizeCreatedEvent(event);
-      return warnings.length > 0 ? { event: summary, warnings } : { event: summary };
+      // createTransfer's own findings (destination bounds, graphic) are advisory,
+      // so they only need to reach the response — not the gate's block decision.
+      gate.warnings.push(...transferWarnings);
+      return gate.respond({ event: summarizeCreatedEvent(event) });
     },
   },
 ];
