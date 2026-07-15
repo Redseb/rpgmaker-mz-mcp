@@ -76,7 +76,7 @@
   <!-- badge-style chips -->
   <g font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="14" font-weight="600">
     <rect x="92" y="205" width="98" height="30" rx="15" fill="#e94560" opacity="0.9"/>
-    <text x="141" y="225" fill="#ffffff" text-anchor="middle">118 tools</text>
+    <text x="141" y="225" fill="#ffffff" text-anchor="middle">123 tools</text>
 
     <rect x="200" y="205" width="112" height="30" rx="15" fill="#0f3460" stroke="#3fa796" stroke-width="1.5"/>
     <text x="256" y="225" fill="#e8f1f2" text-anchor="middle">stdio MCP</text>

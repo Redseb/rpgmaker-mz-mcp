@@ -5,13 +5,13 @@
 # RPG Maker MZ MCP Server
 
 [![CI](https://github.com/Redseb/rpgmaker-mz-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Redseb/rpgmaker-mz-mcp/actions/workflows/ci.yml)
-[![Tools](https://img.shields.io/badge/tools-118-e94560.svg)](#available-tools)
+[![Tools](https://img.shields.io/badge/tools-123-e94560.svg)](#available-tools)
 [![MCP](https://img.shields.io/badge/MCP-stdio-e94560.svg)](https://modelcontextprotocol.io/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178c6.svg)](tsconfig.json)
 [![Node.js >=20](https://img.shields.io/badge/node-%3E%3D20-3fa796.svg)](package.json)
 [![License: MIT](https://img.shields.io/badge/License-MIT-3fa796.svg)](#license)
 
-**118 tools** that let an AI assistant read and write an RPG Maker MZ project directly — actors, classes, skills, items, equipment, states, enemies, troops, common events, maps, tiles, tilesets, events, and system settings — instead of hand-editing everything in the editor.
+**123 tools** that let an AI assistant read and write an RPG Maker MZ project directly — actors, classes, skills, items, equipment, states, enemies, troops, common events, maps, tiles, tilesets, events, and system settings — instead of hand-editing everything in the editor.
 
 _"Add a town under the world map, paint it with grass, and drop in a shopkeeper who sells potions"_ → done, in-project, no editor clicks.
 
@@ -114,7 +114,7 @@ Add to your Claude Desktop configuration file (`%APPDATA%\Claude\claude_desktop_
 
 ## Available tools
 
-All 118 tools, grouped by area. Tools that write to the project accept an optional `dryRun` argument (see [Dry-run preview](#dry-run-preview)).
+All 123 tools, grouped by area. Tools that write to the project accept an optional `dryRun` argument (see [Dry-run preview](#dry-run-preview)).
 
 <details>
 <summary><strong>Expand the full tool reference</strong></summary>
@@ -156,7 +156,8 @@ All 118 tools, grouped by area. Tools that write to the project accept an option
 
 ### Maps & the map tree
 
-- `get_map`, `get_map_infos`, `get_map_dimensions`, `update_map`
+- `get_map` (pass `includeData: false` to omit the tile array on a big map), `get_map_infos`, `get_map_dimensions`, `update_map`
+- `get_map_region` — read a window of tile ids (x, y, width, height, layer) instead of the whole map
 - `create_map` — allocates the next id, writes a blank map, and registers it in the tree
 - `delete_map` — removes a map and reparents its children onto its parent
 - `update_map_tree` — batch reparent/reorder/rename/expand with an up-front existence check and cycle guard
@@ -171,6 +172,8 @@ All 118 tools, grouped by area. Tools that write to the project accept an option
 ### Event & NPC ergonomics
 
 - `create_npc` — one-shot "talking NPC": graphic + trigger + a talk list from `text` or explicit `commands`
+- `create_chest` — one-shot treasure chest: the two-page self-switch idiom (give item/weapon/armor/gold, then never again)
+- `create_transfer` — one-shot map transfer, in either working idiom: face a solid landmark (`action_button`) or step on a doormat (`player_touch`)
 - `set_event_page` — merge a page's graphic + behavior (sprite, trigger, priority, movement, flags) in place
 
 ### Event-command builders
@@ -190,7 +193,8 @@ Read-only builders that return editor-faithful `EventCommand` sequences; land th
 
 ### Plugin commands
 
-- `list_plugin_commands` — view the plugin-command allowlist
+- `scan_plugins` — discover the plugin commands this project actually has, by parsing `js/plugins/*.js` annotations (+ enabled state from `js/plugins.js`)
+- `list_plugin_commands` — view the known plugin commands (the project scan merged over a built-in allowlist)
 - `create_plugin_command` — build a code-357 plugin command with normalized args
 
 ### Tiles, catalog & painting
@@ -219,6 +223,10 @@ Read-only builders that return editor-faithful `EventCommand` sequences; land th
 - `get_terms`, `set_term` — menu vocabulary
 - `get_types`, `set_type_name` — element/skill/weapon/armor/equip type-name lists
 - `set_currency_unit`
+
+### Batch creation
+
+- `batch_create` — create many records of one type (actors, items, weapons, armors, skills, enemies, states, classes) in a single call and a **single file write**; ids allocate sequentially, so a record can reference a sibling made earlier in the same batch
 
 ### Index & validation
 
@@ -261,9 +269,12 @@ Every tool that writes to the project accepts an optional `dryRun` argument. Whe
         "truncated": false
       }
     }
-  ]
+  ],
+  "wouldReturn": { "...": "what the tool would have returned, warnings included" }
 }
 ```
+
+`wouldReturn` carries the response the tool would have produced, so a dry-run also previews the validation warnings a write would have reported — not just the diff.
 
 All writes go through a single choke point that skips no-op writes and keeps the on-disk JSON in the editor's compact single-line format. File deletions (e.g. `delete_map`) share the same dry-run machinery.
 
@@ -337,7 +348,7 @@ rpgmaker-mz-mcp/
 ## Limitations
 
 - Writes JSON files directly; the editor must be closed to avoid conflicts.
-- Plugin-specific data structures are supported through a narrow, extensible allowlist — arbitrary plugin params pass through unchecked.
+- Plugin commands are validated against the plugins your project actually ships (`scan_plugins` parses their `@command`/`@arg` annotations), falling back to a small built-in allowlist. Since RPG Maker MZ has no "required argument" annotation, scanned args are checked for unknown names only, never for missing ones; a plugin with no annotation block passes through unchecked.
 - Animations (`Animations.json`, Effekseer-based) are not edited by this server.
 
 ## Acknowledgements

@@ -27,7 +27,7 @@
   <rect x="385" y="80" width="230" height="130" rx="12" fill="#16213e" stroke="#e94560" stroke-width="2"/>
   <text x="500" y="115" font-family="'Segoe UI', Arial, sans-serif" font-size="17" font-weight="700" fill="#ffffff" text-anchor="middle">MCP Server</text>
   <text x="500" y="137" font-family="'Segoe UI', Arial, sans-serif" font-size="13" fill="#a8b2d1" text-anchor="middle">stdio transport</text>
-  <text x="500" y="157" font-family="'Segoe UI', Arial, sans-serif" font-size="13" fill="#a8b2d1" text-anchor="middle">118 Zod-validated tools</text>
+  <text x="500" y="157" font-family="'Segoe UI', Arial, sans-serif" font-size="13" fill="#a8b2d1" text-anchor="middle">123 Zod-validated tools</text>
   <text x="500" y="177" font-family="'Segoe UI', Arial, sans-serif" font-size="13" fill="#a8b2d1" text-anchor="middle">dry-run diff on every write</text>
 
   <!-- arrow 2 -->
