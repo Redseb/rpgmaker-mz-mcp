@@ -291,7 +291,9 @@ export const moveToolDefinitions: ToolDefinition[] = [
         .describe('Insertion index; defaults to the end of the list'),
     },
     handler: async (ctx, args) => {
-      const route = args.moveRoute as MoveRoute;
+      // Normalize before gating: the gate must judge the route as written (with the
+      // auto-appended Route-End the schema promises), not the raw caller input.
+      const route = normalizeRoute(args.moveRoute as MoveRoute);
       const gate = moveWriteGate(args.force, route);
       const event = await setMovementRoute(
         ctx.projectPath,

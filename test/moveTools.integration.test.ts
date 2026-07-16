@@ -143,6 +143,26 @@ describe('setMovementRoute (integration)', () => {
     expect(result.warnings && result.warnings.length).toBeGreaterThan(0);
   });
 
+  it('auto-appends the Route-End terminator instead of refusing an unterminated route', async () => {
+    const unterminated: MoveRoute = {
+      list: [{ code: 4, parameters: [] }], // no { code: 0 } terminator
+      repeat: false,
+      skippable: true,
+      wait: true,
+    };
+    const def = moveToolDefinitions.find((t) => t.name === 'set_movement_route')!;
+    const result = (await def.handler(
+      { projectPath: dir },
+      { mapId: 1, eventId: 1, pageIndex: 0, characterId: -1, moveRoute: unterminated },
+    )) as { event: MapEvent; warnings?: unknown[] };
+    expect(result.warnings ?? []).toEqual([]);
+    const map = JSON.parse(await readFile(join(dir, 'data', 'Map001.json'), 'utf-8')) as MapData;
+    const list = map.events[1]!.pages[0].list;
+    expect(list.map((c) => c.code)).toEqual([205, 505, 505, 0]);
+    const written = list[0].parameters[1] as MoveRoute;
+    expect(written.list.map((c) => c.code)).toEqual([4, 0]);
+  });
+
   it('rejects an unknown event or page', async () => {
     const route = createMoveRoute('wander');
     await expect(setMovementRoute(dir, 1, 99, 0, 0, route)).rejects.toThrow(/Event 99/);

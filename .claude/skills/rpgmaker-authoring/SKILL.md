@@ -79,6 +79,13 @@ or check the sheet's alpha.
   `data/Tilesets.json`: each entry's `id`/`name` and `tilesetNames[9]`
   `[A1,A2,A3,A4,A5,B,C,D,E]` (empty string = unused sheet). You need the `tilesetId`
   for every paint/catalog/flag call.
+- **Painting an existing map? Check ITS `tilesetId` first** (`get_map`/`check_passability`
+  report it). Tile ids are position-based and valid under any tileset, so painting ids you
+  looked up in tileset 3's catalog onto a map still set to tileset 1 succeeds silently and
+  renders the wrong graphics with the wrong passability. The default/pre-existing MAP001 —
+  and every `create_map` call that omits `tilesetId` — is tileset 1 (Overworld). Fix with
+  `update_map(mapId, { tilesetId })` (safe: it doesn't touch tile data), then re-verify
+  passability.
 - **Get tile ids** with `find_tile(tilesetId, query)` (case-insensitive **substring**,
   _not_ synonyms — "water" won't match "Sea"; browse names with
   `get_tile_catalog(tilesetId, sheet)` first) or `get_tile_catalog`. Autotile entries
@@ -146,6 +153,20 @@ applyToAutotileKind)` — or check with `get_tile_flags`/`check_passability`.
   splice with `insert_event_commands(mapId, eventId, pageIndex, commands)`.
   `call_common_event` returns `{ command }` like the `build_*` tools, so it composes
   the same way.
+- **Cutscene choreography** interleaves `insert_event_commands` (dialogue chunks) with
+  `set_movement_route` (movement) on the same page — both append before the terminator,
+  so build the page in play order. For `custom`/raw routes, the move-route codes you
+  actually need (full table: `KNOWN_MOVE_COMMANDS` in `src/validation/moveCommands.ts`):
+  **1–4** move down/left/right/up, **12/13** step forward/back, **14** jump `[dx,dy]`,
+  **15** wait `[frames]`, **16–19** turn down/left/right/up, **25/26** turn toward/away
+  from player, **29/30** speed/frequency `[n]`, **37/38** through on/off, **39/40**
+  transparent on/off, **41** change image `['SheetName', index]`, **44** play SE. A
+  wrong code isn't refused (plugins add codes) — it's a warning plus silently-weird
+  choreography, so double-check codes, and set `skippable: true` on forced routes so a
+  blocked step can't soft-lock the scene. An off-screen actor entering mid-scene: give
+  the event a graphic-less `through: true` page and open its route with
+  `41 ['SheetName', index]` + `38` (image on, through off), rather than pre-placing a
+  visible sprite.
 - **Common-event bodies and troop pages** take the same insert path, via `target`:
   `insert_event_commands(target: "common_event", commonEventId, commands)` or
   `insert_event_commands(target: "troop_page", troopId, pageIndex, commands)`.
@@ -190,8 +211,22 @@ applyToAutotileKind)` — or check with `get_tile_flags`/`check_passability`.
 
 1. `validate_project` (command shape), `validate_references` (id integrity),
    `validate_event` on the complex events.
-2. **Open it in the editor and play:** every NPC visible? every transfer lands on the
+2. **Headless smoke test** (agent-runnable, no editor needed): serve the project dir
+   (`python3 -m http.server 8123 -d <project>`), `npm i playwright-core` in a scratch
+   dir, and launch an already-cached Playwright Chromium
+   (`~/Library/Caches/ms-playwright/chromium_headless_shell-*/chrome-headless-shell-mac-arm64/chrome-headless-shell`,
+   args `--use-gl=angle --enable-unsafe-swiftshader`) — no browser download. Keyboard
+   events do NOT reach RMMZ headless; drive the engine in `page.evaluate` instead:
+   `DataManager.setupNewGame(); SceneManager.goto(Scene_Map)` to start,
+   `$gamePlayer.reserveTransfer(mapId,x,y,dir,0)` to jump maps (it is deferred while a
+   message window is open), `$gameMap.event(id).start()` to fire an event,
+   `Input.virtualClick('ok')` to advance text. Collect `console`/`pageerror` output and
+   screenshot each map/cutscene/battle, then **look at the images** — this catches the
+   rendering/asset problems validators can't (wrong tileset, invisible NPCs, missing
+   battlers).
+3. **Open it in the editor and play:** every NPC visible? every transfer lands on the
    right tile, facing the right way? battlers render? attacks actually hit? terrain
    solid where it should be, no black gaps in forest/roads? entrances feel like
-   entrances?
-3. Report what you verified in-engine vs. what still needs a human look.
+   entrances? The smoke test doesn't judge audio choice, pacing, or feel — a human
+   pass still matters.
+4. Report what you verified in-engine vs. what still needs a human look.
