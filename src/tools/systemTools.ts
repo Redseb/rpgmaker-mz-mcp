@@ -1,8 +1,10 @@
 import { z } from 'zod';
 import { readJsonFile, readJsonArraySoft, getDataPath, getMapPath } from '../utils/fileHandler.js';
 import { commitChange } from '../utils/commit.js';
-import { SystemData, Terms, Actor, MapInfo, MapData } from '../utils/types.js';
+import { SystemData, Terms, Actor, MapInfo, MapData, AudioFile } from '../utils/types.js';
 import { ToolDefinition } from '../registry.js';
+import { assetNameWarning } from './assetTools.js';
+import { ValidationWarning } from '../validation/eventCommands.js';
 
 /**
  * Get system data
@@ -181,6 +183,94 @@ export async function updateGameTitle(projectPath: string, title: string): Promi
   await commitChange(systemPath, system);
 }
 
+/** Title screen settings: the two background layers, the BGM, and whether the
+ * game title text is drawn over the art (System.json's optDrawTitle). */
+export interface TitleScreen {
+  title1Name: string;
+  title2Name: string;
+  titleBgm: AudioFile;
+  drawTitle: boolean;
+}
+
+/**
+ * Get title screen settings
+ */
+export async function getTitleScreen(projectPath: string): Promise<TitleScreen> {
+  const system = await getSystem(projectPath);
+  return {
+    title1Name: system.title1Name,
+    title2Name: system.title2Name,
+    titleBgm: system.titleBgm,
+    drawTitle: system.optDrawTitle,
+  };
+}
+
+/**
+ * Update title screen settings. Only the provided fields are changed.
+ */
+export async function updateTitleScreen(
+  projectPath: string,
+  updates: Partial<TitleScreen>,
+): Promise<TitleScreen> {
+  const system = await getSystem(projectPath);
+  if (updates.title1Name !== undefined) system.title1Name = updates.title1Name;
+  if (updates.title2Name !== undefined) system.title2Name = updates.title2Name;
+  if (updates.titleBgm !== undefined) system.titleBgm = updates.titleBgm;
+  if (updates.drawTitle !== undefined) system.optDrawTitle = updates.drawTitle;
+
+  const systemPath = getDataPath(projectPath, 'System.json');
+  await commitChange(systemPath, system);
+
+  return {
+    title1Name: system.title1Name,
+    title2Name: system.title2Name,
+    titleBgm: system.titleBgm,
+    drawTitle: system.optDrawTitle,
+  };
+}
+
+/**
+ * Warn (never throw) when the title screen's background images or BGM aren't
+ * among the project's assets — a wrong filename is a silent runtime failure
+ * (blank background / no music). Only checks fields present in `updates`, so a
+ * partial update doesn't re-warn on fields it didn't touch. Mirrors
+ * `withEnemyAssetWarnings` (battleTools) and `audioNameWarnings` (eventCommandTools).
+ */
+async function titleScreenAssetWarnings(
+  projectPath: string,
+  updates: Partial<TitleScreen>,
+): Promise<ValidationWarning[]> {
+  const warnings: ValidationWarning[] = [];
+  if (updates.title1Name !== undefined) {
+    warnings.push(
+      ...(await assetNameWarning(projectPath, 'titles1', updates.title1Name, {
+        path: 'title1Name',
+        label: 'image',
+        consequence: 'a wrong filename shows a blank title background',
+      })),
+    );
+  }
+  if (updates.title2Name !== undefined) {
+    warnings.push(
+      ...(await assetNameWarning(projectPath, 'titles2', updates.title2Name, {
+        path: 'title2Name',
+        label: 'image',
+        consequence: 'a wrong filename shows a blank title background',
+      })),
+    );
+  }
+  if (updates.titleBgm !== undefined) {
+    warnings.push(
+      ...(await assetNameWarning(projectPath, 'bgm', updates.titleBgm.name, {
+        path: 'titleBgm.name',
+        label: 'audio',
+        consequence: 'a wrong filename fails silently at runtime',
+      })),
+    );
+  }
+  return warnings;
+}
+
 /**
  * Get all terms (vocabulary): the `basic`, `commands`, `params` string arrays
  * and the `messages` string map.
@@ -319,6 +409,64 @@ export const systemToolDefinitions: ToolDefinition[] = [
     handler: async (ctx, args) => {
       await updateGameTitle(ctx.projectPath, args.title);
       return { success: true };
+    },
+  },
+  {
+    name: 'get_title_screen',
+    description:
+      'Get the title screen settings: title1Name/title2Name (background layers, from list_assets("titles1"/"titles2") — title2Name draws over title1Name), titleBgm (the AudioFile that plays while it is shown), and drawTitle (whether the game title text is drawn over the art).',
+    inputSchema: {},
+    handler: (ctx) => getTitleScreen(ctx.projectPath),
+  },
+  {
+    name: 'update_title_screen',
+    mutates: true,
+    description:
+      'Update the title screen: background layers (title1Name/title2Name, basenames from list_assets("titles1"/"titles2")), the BGM that plays while it is shown, and/or whether the game title text is drawn over the art. Only the provided fields are changed. Warns (never blocks) when an image/audio name is not a known asset. Returns the updated title screen settings.',
+    inputSchema: {
+      title1Name: z
+        .string()
+        .optional()
+        .describe('Background image basename from list_assets("titles1") (the far layer)'),
+      title2Name: z
+        .string()
+        .optional()
+        .describe('Background image basename from list_assets("titles2") (drawn over title1Name)'),
+      titleBgm: z
+        .object({
+          name: z.string().describe('Audio basename from list_assets("bgm")'),
+          volume: z.number().optional().describe('Volume 0–100 (default 90)'),
+          pitch: z.number().optional().describe('Pitch 50–150 (default 100)'),
+          pan: z.number().optional().describe('Pan -100–100 (default 0)'),
+        })
+        .optional()
+        .describe('BGM that plays while the title screen is shown'),
+      drawTitle: z
+        .boolean()
+        .optional()
+        .describe(
+          'Whether to draw the game title text over the background art (the editor\'s "Draw Game Title" option)',
+        ),
+    },
+    handler: async (ctx, args) => {
+      const updates: Partial<TitleScreen> = {};
+      if (args.title1Name !== undefined) updates.title1Name = args.title1Name;
+      if (args.title2Name !== undefined) updates.title2Name = args.title2Name;
+      if (args.titleBgm !== undefined) {
+        updates.titleBgm = {
+          name: args.titleBgm.name,
+          volume: args.titleBgm.volume ?? 90,
+          pitch: args.titleBgm.pitch ?? 100,
+          pan: args.titleBgm.pan ?? 0,
+        };
+      }
+      if (args.drawTitle !== undefined) updates.drawTitle = args.drawTitle;
+
+      const [titleScreen, warnings] = await Promise.all([
+        updateTitleScreen(ctx.projectPath, updates),
+        titleScreenAssetWarnings(ctx.projectPath, updates),
+      ]);
+      return warnings.length > 0 ? { ...titleScreen, warnings } : titleScreen;
     },
   },
   {

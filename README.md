@@ -5,13 +5,13 @@
 # RPG Maker MZ MCP Server
 
 [![CI](https://github.com/Redseb/rpgmaker-mz-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Redseb/rpgmaker-mz-mcp/actions/workflows/ci.yml)
-[![Tools](https://img.shields.io/badge/tools-113-e94560.svg)](#available-tools)
+[![Tools](https://img.shields.io/badge/tools-115-e94560.svg)](#available-tools)
 [![MCP](https://img.shields.io/badge/MCP-stdio-e94560.svg)](https://modelcontextprotocol.io/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178c6.svg)](tsconfig.json)
 [![Node.js >=20](https://img.shields.io/badge/node-%3E%3D20-3fa796.svg)](package.json)
 [![License: MIT](https://img.shields.io/badge/License-MIT-3fa796.svg)](#license)
 
-**113 tools** that let an AI assistant read and write an RPG Maker MZ project directly — actors, classes, skills, items, equipment, states, enemies, troops, common events, maps, tiles, tilesets, events, and system settings — instead of hand-editing everything in the editor.
+**115 tools** that let an AI assistant read and write an RPG Maker MZ project directly — actors, classes, skills, items, equipment, states, enemies, troops, common events, maps, tiles, tilesets, events, and system settings — instead of hand-editing everything in the editor.
 
 _"Add a town under the world map, paint it with grass, and drop in a shopkeeper who sells potions"_ → done, in-project, no editor clicks.
 
@@ -144,7 +144,7 @@ The easiest path is the `.mcpb` bundle from [Releases](https://github.com/Redseb
 
 ## Available tools
 
-All 113 tools, grouped by area. Tools that write to the project accept an optional `dryRun` argument (see [Dry-run preview](#dry-run-preview)); those that can refuse a structurally invalid write also accept `force` (see [Event validation](#event-validation-throw-by-default)).
+All 115 tools, grouped by area. Tools that write to the project accept an optional `dryRun` argument (see [Dry-run preview](#dry-run-preview)); those that can refuse a structurally invalid write also accept `force` (see [Event validation](#event-validation-throw-by-default)).
 
 <details>
 <summary><strong>Expand the full tool reference</strong></summary>
@@ -252,6 +252,7 @@ Read-only builders that return editor-faithful `EventCommand` sequences; land th
 ### System & vocabulary
 
 - `get_system`, `get_game_title`, `update_game_title`
+- `get_title_screen`, `update_title_screen` — background layers, BGM, and the "draw game title" toggle
 - `get_variables`, `set_variable_name`, `get_switches`, `set_switch_name`
 - `get_starting_position`, `update_starting_position`
 - `get_party`, `set_party` — the starting party (`set_party` validates every actor id)

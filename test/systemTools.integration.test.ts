@@ -10,6 +10,8 @@ import {
   getTypes,
   setTypeName,
   setCurrencyUnit,
+  getTitleScreen,
+  updateTitleScreen,
   systemToolDefinitions,
 } from '../src/tools/systemTools.js';
 
@@ -29,6 +31,10 @@ function seedSystem() {
       params: ['Max HP', 'Max MP'],
       messages: { actorDamage: '%1 took %2 damage!' },
     },
+    title1Name: 'Castle',
+    title2Name: '',
+    titleBgm: { name: 'Theme1', volume: 90, pitch: 100, pan: 0 },
+    optDrawTitle: true,
   };
 }
 
@@ -106,5 +112,66 @@ describe('system tools (integration)', () => {
     await setCurrencyUnit(dir, 'Gold');
     const raw = JSON.parse(await readFile(join(dir, 'data', 'System.json'), 'utf-8'));
     expect(raw.currencyUnit).toBe('Gold');
+  });
+
+  it('getTitleScreen reads title1Name/title2Name/titleBgm/drawTitle off System.json', async () => {
+    expect(await getTitleScreen(dir)).toEqual({
+      title1Name: 'Castle',
+      title2Name: '',
+      titleBgm: { name: 'Theme1', volume: 90, pitch: 100, pan: 0 },
+      drawTitle: true,
+    });
+  });
+
+  it('updateTitleScreen only changes the provided fields', async () => {
+    await updateTitleScreen(dir, { title2Name: 'Overlay', drawTitle: false });
+    expect(await getTitleScreen(dir)).toEqual({
+      title1Name: 'Castle', // unchanged
+      title2Name: 'Overlay',
+      titleBgm: { name: 'Theme1', volume: 90, pitch: 100, pan: 0 }, // unchanged
+      drawTitle: false,
+    });
+  });
+
+  describe('update_title_screen tool (asset warnings)', () => {
+    beforeEach(async () => {
+      await mkdir(join(dir, 'img', 'titles1'), { recursive: true });
+      await writeFile(join(dir, 'img', 'titles1', 'Castle.png'), '');
+      await mkdir(join(dir, 'audio', 'bgm'), { recursive: true });
+      await writeFile(join(dir, 'audio', 'bgm', 'Theme1.ogg'), '');
+    });
+
+    it('returns no warnings for known asset names', async () => {
+      const def = systemToolDefinitions.find((t) => t.name === 'update_title_screen')!;
+      const result = (await def.handler({ projectPath: dir }, { title1Name: 'Castle' })) as {
+        warnings?: unknown[];
+      };
+      expect(result.warnings).toBeUndefined();
+    });
+
+    it('warns (but still writes) on an unknown image/audio name', async () => {
+      const def = systemToolDefinitions.find((t) => t.name === 'update_title_screen')!;
+      const result = (await def.handler(
+        { projectPath: dir },
+        { title1Name: 'NoSuchImage', titleBgm: { name: 'NoSuchTrack' } },
+      )) as { title1Name: string; warnings?: { path: string }[] };
+
+      expect(result.title1Name).toBe('NoSuchImage');
+      expect(result.warnings?.map((w) => w.path).sort()).toEqual(['title1Name', 'titleBgm.name']);
+
+      // Update still persisted despite the warning.
+      expect((await getTitleScreen(dir)).title1Name).toBe('NoSuchImage');
+    });
+
+    it('defaults titleBgm volume/pitch/pan when omitted', async () => {
+      const def = systemToolDefinitions.find((t) => t.name === 'update_title_screen')!;
+      await def.handler({ projectPath: dir }, { titleBgm: { name: 'Theme1' } });
+      expect((await getTitleScreen(dir)).titleBgm).toEqual({
+        name: 'Theme1',
+        volume: 90,
+        pitch: 100,
+        pan: 0,
+      });
+    });
   });
 });
