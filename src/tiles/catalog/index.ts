@@ -165,19 +165,51 @@ export function catalogForTileset(
   return entries;
 }
 
+/** Which catalog fields a {@link findTiles} query matched. */
+export type MatchField = 'name' | 'description';
+
+/** A {@link findTiles} hit: a catalog entry plus the fields the query matched. */
+export interface CatalogMatch extends CatalogEntry {
+  /** The fields `query` matched, in name-then-description order. */
+  matchedIn: MatchField[];
+}
+
+/** Options for {@link findTiles}. */
+export interface FindTilesOptions {
+  /**
+   * Also match a tile's free-text `description`. Descriptions only exist on
+   * `project` catalog entries (the 3f vision-bootstrap skill records what a tile
+   * *looks like*), so this widens the search exactly where names are terse and
+   * machine-drafted. Off by default — the name-only match surface is tight and
+   * predictable, and a description search returns entries whose name says
+   * nothing about the query.
+   */
+  searchDescriptions?: boolean;
+}
+
 /**
- * Catalog entries for a tileset whose name matches `query` (case-insensitive
- * substring). The bridge for "give me a grass tile" → a paintable tile id.
+ * Catalog entries for a tileset matching `query` (case-insensitive substring).
+ * The bridge for "give me a grass tile" → a paintable tile id. Matches names
+ * only unless `searchDescriptions` is set, in which case a project entry also
+ * matches on its description text; each hit reports which fields matched.
  */
 export function findTiles(
   tilesetNames: string[],
   query: string,
   overlay?: CatalogOverlay,
-): CatalogEntry[] {
+  options: FindTilesOptions = {},
+): CatalogMatch[] {
   const q = query.toLowerCase();
-  return catalogForTileset(tilesetNames, undefined, overlay).filter((e) =>
-    e.name.toLowerCase().includes(q),
-  );
+  const matches: CatalogMatch[] = [];
+  for (const entry of catalogForTileset(tilesetNames, undefined, overlay)) {
+    const matchedIn: MatchField[] = [];
+    if (entry.name.toLowerCase().includes(q)) matchedIn.push('name');
+    if (options.searchDescriptions && entry.description?.toLowerCase().includes(q)) {
+      matchedIn.push('description');
+    }
+    if (matchedIn.length > 0) matches.push({ ...entry, matchedIn });
+  }
+  return matches;
 }
 
 /** Whether any sheet of a tileset is covered by the catalog (built-in or overlay). */

@@ -180,6 +180,30 @@ describe('project-catalog overlay', () => {
     expect(findTiles(CUSTOM, 'earth', overlay).map((e) => e.name)).toEqual(['Cracked Earth']);
   });
 
+  it('searches descriptions only when asked, reporting which fields matched', () => {
+    const described = {
+      Custom_A2: [
+        { name: 'Emerald Grass', description: 'bright green grass with tiny flowers' },
+        { name: 'Cracked Earth', description: 'dry cracked dirt' },
+      ],
+    };
+    // Name-only (the default) never sees the description text.
+    expect(findTiles(CUSTOM, 'flowers', described)).toEqual([]);
+
+    const hits = findTiles(CUSTOM, 'flowers', described, { searchDescriptions: true });
+    expect(hits.map((e) => e.name)).toEqual(['Emerald Grass']);
+    expect(hits[0].matchedIn).toEqual(['description']);
+
+    // A query hitting both fields reports both, name first.
+    const both = findTiles(CUSTOM, 'grass', described, { searchDescriptions: true });
+    expect(both[0].matchedIn).toEqual(['name', 'description']);
+
+    // Built-in entries have no description, so widening can't change their result.
+    expect(findTiles(OVERWORLD, 'grassland', undefined, { searchDescriptions: true }).length).toBe(
+      findTiles(OVERWORLD, 'grassland').length,
+    );
+  });
+
   it('built-in names stay authoritative and are tagged builtin', () => {
     const entries = catalogForTileset(OVERWORLD, undefined, overlay);
     const grass = entries.find((e) => e.name === 'Grassland A')!;

@@ -125,6 +125,42 @@ describe('catalog tools with project-scoped catalogs (integration)', () => {
     });
   });
 
+  it('find_tile matches a project-catalog description only when asked', async () => {
+    dir = await scaffold(true);
+    type FindResult = {
+      count: number;
+      searchedDescriptions: boolean;
+      matches: { name: string; matchedIn: string[]; description?: string }[];
+    };
+    // "flowers" appears only in Emerald Grass's description, never in a name.
+    const namesOnly = (await findTile.handler(
+      { projectPath: dir },
+      { tilesetId: 1, query: 'flowers' },
+    )) as FindResult;
+    expect(namesOnly.count).toBe(0);
+    expect(namesOnly.searchedDescriptions).toBe(false);
+
+    const widened = (await findTile.handler(
+      { projectPath: dir },
+      { tilesetId: 1, query: 'flowers', searchDescriptions: true },
+    )) as FindResult;
+    expect(widened.searchedDescriptions).toBe(true);
+    expect(widened.matches.map((m) => m.name)).toEqual(['Emerald Grass']);
+    expect(widened.matches[0].matchedIn).toEqual(['description']);
+  });
+
+  it('find_tile reports both fields when the query hits name and description', async () => {
+    dir = await scaffold(true);
+    const res = (await findTile.handler(
+      { projectPath: dir },
+      { tilesetId: 1, query: 'grass', searchDescriptions: true },
+    )) as { matches: { name: string; matchedIn: string[] }[] };
+    expect(res.matches.find((m) => m.name === 'Emerald Grass')!.matchedIn).toEqual([
+      'name',
+      'description',
+    ]);
+  });
+
   it('find_tile bridges a custom name to a paintable tile id', async () => {
     dir = await scaffold(true);
     const res = (await findTile.handler(
