@@ -308,6 +308,38 @@ describe('insert_event_commands (integration)', () => {
     expect(map.events[1]!.pages[0].list.some((c) => c.code === 401)).toBe(false);
   });
 
+  it('refuses a hand-built choices block whose branches do not match its choices', async () => {
+    // Two choices but only one When branch — the second choice would do nothing.
+    const commands = [
+      { code: 102, indent: 0, parameters: [['Yes', 'No'], -1, 0, 2, 0] },
+      { code: 402, indent: 0, parameters: [0, 'Yes'] },
+      { code: 0, indent: 1, parameters: [] },
+      { code: 404, indent: 0, parameters: [] },
+    ];
+    await expect(
+      get('insert_event_commands').handler(
+        { projectPath: dir },
+        { mapId: 1, eventId: 1, pageIndex: 0, commands },
+      ),
+    ).rejects.toThrow(/no When branch for choice 1/);
+
+    const map = JSON.parse(await readFile(join(dir, 'data', 'Map001.json'), 'utf-8')) as MapData;
+    expect(map.events[1]!.pages[0].list.map((c) => c.code)).toEqual([0]);
+  });
+
+  it('refuses a conditional branch left unclosed on the page', async () => {
+    const commands = [
+      { code: 111, indent: 0, parameters: [0, 1, 0] },
+      { code: 0, indent: 1, parameters: [] },
+    ];
+    await expect(
+      get('insert_event_commands').handler(
+        { projectPath: dir },
+        { mapId: 1, eventId: 1, pageIndex: 0, commands },
+      ),
+    ).rejects.toThrow(/never closed by 412/);
+  });
+
   it('inserts a malformed command when forced, reporting the problem', async () => {
     const result = (await get('insert_event_commands').handler(
       { projectPath: dir },

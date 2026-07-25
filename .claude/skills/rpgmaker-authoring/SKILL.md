@@ -21,7 +21,8 @@ Treat "validators clean" as necessary, never sufficient.
 
 The flip side: the event-writing tools **refuse** a write whose result is structurally
 broken (wrong parameter count for a command code, a `list` missing its `{ code: 0 }`
-terminator, an action-button event stranded on an impassable tile) — the tool errors
+terminator, a choice/conditional/loop block left unclosed or missing a `When` branch, an
+action-button event stranded on an impassable tile) — the tool errors
 and nothing is saved. That error is a real bug in what you were about to write: **fix
 the input.** `force: true` writes it anyway and exists for the rare case where the
 validator is wrong (an exotic plugin, a deliberate experiment) — reaching for it to
@@ -88,7 +89,9 @@ or check the sheet's alpha.
   passability.
 - **Get tile ids** with `find_tile(tilesetId, query)` (case-insensitive **substring**,
   _not_ synonyms — "water" won't match "Sea"; browse names with
-  `get_tile_catalog(tilesetId, sheet)` first) or `get_tile_catalog`. Autotile entries
+  `get_tile_catalog(tilesetId, sheet)` first) or `get_tile_catalog`. On a **custom**
+  sheet cataloged by the tileset-catalog skill, `searchDescriptions: true` also matches
+  the drafted visual description, which is often more searchable than the name. Autotile entries
   return the kind's base id — paint it and the shape is computed from neighbours.
 - **Don't resize an existing map.** `update_map` changing `width`/`height` does **not**
   resize the tile `data` array — it corrupts the map. Create the map at the size you
