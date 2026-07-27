@@ -49,6 +49,50 @@ describe('validateCommand', () => {
   });
 });
 
+describe('validateCommand — condition/operand-aware arity', () => {
+  it('checks Conditional Branch arity per condition type', () => {
+    expect(validateCommand(cmd(111, [0, 3, 0]), 'x')).toEqual([]); // switch
+    expect(validateCommand(cmd(111, [1, 1, 0, 10, 1]), 'x')).toEqual([]); // variable
+    expect(validateCommand(cmd(111, [8, 4]), 'x')).toEqual([]); // item
+    const short = validateCommand(cmd(111, [1, 1, 0]), 'x');
+    expect(short).toHaveLength(1);
+    expect(short[0]).toMatchObject({ code: 111, severity: 'error' });
+    expect(short[0].message).toMatch(/condition type 1 expects at least 5/);
+  });
+
+  it('accepts a longer Conditional Branch (sub-kinds carry an extra parameter)', () => {
+    expect(validateCommand(cmd(111, [4, 1, 4, 7]), 'x')).toEqual([]); // actor has state
+  });
+
+  it('leaves an unknown condition type alone', () => {
+    expect(validateCommand(cmd(111, [99, 1]), 'x')).toEqual([]);
+  });
+
+  it('checks Control Variables arity per operand type', () => {
+    expect(validateCommand(cmd(122, [1, 1, 0, 0, 5]), 'x')).toEqual([]); // constant
+    expect(validateCommand(cmd(122, [1, 1, 0, 2, 1, 6]), 'x')).toEqual([]); // random
+    expect(validateCommand(cmd(122, [1, 1, 0, 3, 0, 2, 0]), 'x')).toEqual([]); // game data
+    const short = validateCommand(cmd(122, [1, 1, 0, 2, 1]), 'x');
+    expect(short[0].message).toMatch(/operand type 2 expects at least 6/);
+  });
+
+  it('requires Show Choices to carry a non-empty choice array', () => {
+    expect(validateCommand(cmd(102, [['Yes', 'No'], -1, 0, 2, 0]), 'x')).toEqual([]);
+    expect(validateCommand(cmd(102, [['Yes'], -1]), 'x')).toEqual([]); // engine defaults the rest
+    expect(validateCommand(cmd(102, ['Yes', -1]), 'x')[0].message).toMatch(
+      /parameters\[0\] must be the array/,
+    );
+    expect(validateCommand(cmd(102, [[], -1]), 'x')[0].message).toMatch(/choice array is empty/);
+  });
+
+  it('pins the parameterless block markers at zero parameters', () => {
+    for (const code of [115, 403, 404, 411, 412, 413]) {
+      expect(validateCommand(cmd(code, []), 'x')).toEqual([]);
+      expect(validateCommand(cmd(code, [0]), 'x')).toHaveLength(1);
+    }
+  });
+});
+
 describe('validateCommandList', () => {
   it('accepts a list terminated by the code-0 end marker', () => {
     expect(validateCommandList([cmd(117, [1]), cmd(0)], 'p')).toEqual([]);

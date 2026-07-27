@@ -1,4 +1,5 @@
 import { EventCommand, MapEvent } from '../utils/types.js';
+import { blockStructureWarnings } from './eventBlocks.js';
 
 /**
  * How seriously a finding should be taken.
@@ -54,6 +55,92 @@ const expectAtLeast =
   (params: unknown[]): string | null =>
     params.length >= n ? null : `expected at least ${n} parameter(s), got ${params.length}`;
 
+const expectBetween =
+  (min: number, max: number) =>
+  (params: unknown[]): string | null =>
+    params.length >= min && params.length <= max
+      ? null
+      : `expected ${min}–${max} parameters, got ${params.length}`;
+
+/**
+ * Show Choices (102). The engine's `setupChoices` reads `params[0]` as the choice
+ * array and defaults every later slot it doesn't find (`params.length > 2 ? … `),
+ * so a short list is legal — but a missing/non-array choice list is not: it
+ * throws on `params[0].clone()`.
+ */
+function checkShowChoices(params: unknown[]): string | null {
+  if (!Array.isArray(params[0])) {
+    return 'parameters[0] must be the array of choice texts';
+  }
+  if (params[0].length === 0) {
+    return 'the choice array is empty — a Show Choices needs at least one choice';
+  }
+  return expectBetween(2, 5)(params);
+}
+
+/**
+ * Minimum parameter count per Conditional Branch (111) condition type, keyed by
+ * `params[0]` (the type selector the engine's `command111` switches on). These are
+ * minimums, not exact counts — a few types carry an extra parameter for a sub-kind
+ * (e.g. actor "has state") and MZ appends parameters across versions, so an
+ * over-long list is not a defect while a short one always is.
+ */
+const BRANCH_CONDITION_ARITY: Record<number, number> = {
+  0: 3, // switch: [0, switchId, on/off]
+  1: 5, // variable: [1, variableId, operandType, operand, comparison]
+  2: 3, // self switch: [2, 'A'..'D', on/off]
+  3: 3, // timer: [3, seconds, comparison]
+  4: 3, // actor: [4, actorId, subKind, …]
+  5: 3, // enemy: [5, enemyIndex, subKind, …]
+  6: 3, // character: [6, characterId, direction]
+  7: 3, // gold: [7, value, comparison]
+  8: 2, // item: [8, itemId]
+  9: 3, // weapon: [9, weaponId, includeEquip]
+  10: 3, // armor: [10, armorId, includeEquip]
+  11: 2, // button: [11, buttonName, …]
+  12: 2, // script: [12, script]
+  13: 2, // vehicle: [13, vehicleType]
+};
+
+/** Conditional Branch (111): the parameter count depends on the condition type. */
+function checkConditionalBranch(params: unknown[]): string | null {
+  const short = expectAtLeast(1)(params);
+  if (short) return short;
+  const type = params[0];
+  if (typeof type !== 'number') return 'parameters[0] must be the numeric condition type';
+  const min = BRANCH_CONDITION_ARITY[type];
+  if (min === undefined) return null; // unknown/plugin condition type — don't guess
+  return params.length >= min
+    ? null
+    : `condition type ${type} expects at least ${min} parameters, got ${params.length}`;
+}
+
+/**
+ * Minimum parameter count per Control Variables (122) operand type, keyed by
+ * `params[3]`. From `command122`: constant/variable/script read `params[4]`,
+ * random reads `params[4..5]`, game data reads `params[4..6]`.
+ */
+const VARIABLE_OPERAND_ARITY: Record<number, number> = {
+  0: 5, // constant
+  1: 5, // variable
+  2: 6, // random: min, max
+  3: 7, // game data: dataType, param1, param2
+  4: 5, // script
+};
+
+/** Control Variables (122): the parameter count depends on the operand type. */
+function checkControlVariables(params: unknown[]): string | null {
+  const short = expectAtLeast(4)(params);
+  if (short) return short;
+  const operandType = params[3];
+  if (typeof operandType !== 'number') return 'parameters[3] must be the numeric operand type';
+  const min = VARIABLE_OPERAND_ARITY[operandType];
+  if (min === undefined) return null;
+  return params.length >= min
+    ? null
+    : `operand type ${operandType} expects at least ${min} parameters, got ${params.length}`;
+}
+
 /**
  * Curated table of core RPG Maker MZ event command codes. Not exhaustive — it
  * covers the commands this server is most likely to read or write, plus enough
@@ -71,22 +158,22 @@ export const KNOWN_COMMANDS: Record<number, CommandSpec> = {
         ? null
         : `Show Text expects 4 or 5 parameters, got ${p.length}`,
   },
-  102: { name: 'Show Choices', check: expectAtLeast(2) },
+  102: { name: 'Show Choices', check: checkShowChoices },
   103: { name: 'Input Number', check: expectLength(2) },
   104: { name: 'Select Item', check: expectLength(2) },
   105: { name: 'Show Scrolling Text', check: expectAtLeast(1) },
   108: { name: 'Comment', check: expectAtLeast(1) },
   // Flow control
-  111: { name: 'Conditional Branch', check: expectAtLeast(1) },
+  111: { name: 'Conditional Branch', check: checkConditionalBranch },
   112: { name: 'Loop' },
   113: { name: 'Break Loop' },
-  115: { name: 'Exit Event Processing' },
+  115: { name: 'Exit Event Processing', check: expectLength(0) },
   117: { name: 'Common Event', check: expectLength(1) },
   118: { name: 'Label', check: expectLength(1) },
   119: { name: 'Jump to Label', check: expectLength(1) },
   // Game progression
   121: { name: 'Control Switches', check: expectLength(3) },
-  122: { name: 'Control Variables', check: expectAtLeast(4) },
+  122: { name: 'Control Variables', check: checkControlVariables },
   123: { name: 'Control Self Switch', check: expectLength(2) },
   124: { name: 'Control Timer', check: expectAtLeast(1) },
   125: { name: 'Change Gold', check: expectLength(3) },
@@ -189,15 +276,15 @@ export const KNOWN_COMMANDS: Record<number, CommandSpec> = {
   // Continuation codes (data rows for the setup command above them)
   401: { name: 'Show Text line', check: expectLength(1) },
   402: { name: 'When [choice]', check: expectLength(2) },
-  403: { name: 'When Cancel' },
-  404: { name: 'End Choices' },
+  403: { name: 'When Cancel', check: expectLength(0) },
+  404: { name: 'End Choices', check: expectLength(0) },
   405: { name: 'Scrolling Text line', check: expectLength(1) },
   408: { name: 'Comment line', check: expectAtLeast(1) },
   505: { name: 'Move Route step', check: expectLength(1) },
   605: { name: 'Shop goods', check: expectLength(4) },
-  411: { name: 'Else' },
-  412: { name: 'End Conditional Branch' },
-  413: { name: 'Repeat Above' },
+  411: { name: 'Else', check: expectLength(0) },
+  412: { name: 'End Conditional Branch', check: expectLength(0) },
+  413: { name: 'Repeat Above', check: expectLength(0) },
   655: { name: 'Script line', check: expectAtLeast(1) },
 };
 
@@ -314,6 +401,7 @@ export function validateCommandList(list: unknown, path: string): ValidationWarn
     warnings.push(...validateCommand(command as EventCommand, `${path} / command ${i}`));
   });
 
+  warnings.push(...blockStructureWarnings(list as EventCommand[], path));
   warnings.push(...textLineWidthWarnings(list as EventCommand[], path));
 
   return warnings;

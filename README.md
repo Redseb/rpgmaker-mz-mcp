@@ -235,7 +235,7 @@ Read-only builders that return editor-faithful `EventCommand` sequences; land th
 ### Tiles, catalog & painting
 
 - `describe_tile` — decode a raw tile id (sheet, autotile kind/shape, geometry)
-- `get_tile_catalog`, `find_tile` — resolve human names ↔ paintable tile ids
+- `get_tile_catalog`, `find_tile` — resolve human names ↔ paintable tile ids (`find_tile` can widen the search to a custom sheet's catalog descriptions with `searchDescriptions`)
 - `paint_tiles`, `fill_area` — paint with automatic autotiling
 - `place_object` — stamp a multi-tile B/C object and report its passability footprint
 
@@ -279,10 +279,10 @@ Every tool declares its arguments as a [Zod](https://zod.dev) schema. The server
 
 ## Event validation (throw-by-default)
 
-Event command lists are checked against a table of known RPG Maker MZ command codes (`101` Show Text, `201` Transfer Player, `122` Control Variables, …). Findings come in two tiers, and the tier decides what happens to the write:
+Event command lists are checked against a table of known RPG Maker MZ command codes (`101` Show Text, `201` Transfer Player, `122` Control Variables, …), and against the **block structure** those commands form. Findings come in two tiers, and the tier decides what happens to the write:
 
-- **Structural** — a wrong parameter count for a known command, a list not terminated by the code-`0` end marker, a non-array `parameters`, or an action-button event stranded on an impassable tile. These are almost always bugs, so the event-writing tools **validate the would-be result before committing and refuse the write**: the tool errors and *nothing reaches disk*. Pass `force: true` to write anyway (the argument is advertised on exactly the tools that can refuse).
-- **Advisory** — an unrecognized command code (which may simply be a plugin command), an over-long text line, an unknown asset filename. These are legitimately possible, so they never block; they ride along as `warnings` on the normal response.
+- **Structural** — a wrong parameter count for a known command (including the counts that depend on a Conditional Branch's condition type or a Control Variables operand type), a list not terminated by the code-`0` end marker, a non-array `parameters`, a broken block (a Show Choices/Conditional Branch/Loop that is never closed, a branch or closer row orphaned or written at the wrong indent, a choice with no `When` branch), or an action-button event stranded on an impassable tile. These are almost always bugs, so the event-writing tools **validate the would-be result before committing and refuse the write**: the tool errors and *nothing reaches disk*. Pass `force: true` to write anyway (the argument is advertised on exactly the tools that can refuse).
+- **Advisory** — an unrecognized command code (which may simply be a plugin command), an over-long text line, an unknown asset filename, a choice block whose Cancel routing and `When Cancel` branch disagree (dead code, not corruption). These are legitimately possible, so they never block; they ride along as `warnings` on the normal response.
 
 Because the check runs *before* the commit, a `dryRun` of a write that would be refused fails too, rather than previewing a write that could never happen.
 
@@ -319,7 +319,7 @@ All writes go through a single choke point that skips no-op writes and keeps the
 
 ## Custom-tileset catalog skill
 
-The default tilesets are cataloged out of the box. For a **custom** (non-RTP) tileset, a bundled Claude skill under `.claude/skills/tileset-catalog/` slices each sheet into labelled samples, has Claude vision-name them, and writes a versioned, project-scoped catalog to `data/tilecatalog/` — after which `find_tile`/`get_tile_catalog` resolve names for that sheet too. The skill ships a dependency-free PNG codec and engine-exact tile geometry, so it runs anywhere Node does.
+The default tilesets are cataloged out of the box. For a **custom** (non-RTP) tileset, a bundled Claude skill under `.claude/skills/tileset-catalog/` slices each sheet into labelled samples, has Claude vision-name them, and writes a versioned, project-scoped catalog to `data/tilecatalog/` — after which `find_tile`/`get_tile_catalog` resolve names for that sheet too. Those drafts also record what each tile *looks like*, so `find_tile` with `searchDescriptions: true` can match that text when a machine-drafted name is too terse to search by. The skill ships a dependency-free PNG codec and engine-exact tile geometry, so it runs anywhere Node does.
 
 ## Example prompts
 
