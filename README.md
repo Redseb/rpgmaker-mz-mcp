@@ -363,14 +363,18 @@ The advertised tool count lives in a few human-facing spots — the README prose
 ```bash
 npm version minor           # or patch/major — bumps package.json + tags
 npm run sync:version        # stamp the new version into the other manifests
-git add -A && git commit --amend --no-edit && git push --follow-tags
+git add -A && git commit --amend --no-edit
+git push && git push origin vX.Y.Z   # amend rewrites the tagged commit, so push the tag explicitly
 
 npm publish                 # publish to npm (runs the full gate via prepublishOnly)
 mcp-publisher publish       # update the MCP registry listing (server.json; login: mcp-publisher login github)
-npm run bundle:mcpb         # build rpgmaker-mz-mcp.mcpb and attach it to the GitHub release
+npm run bundle:mcpb         # build rpgmaker-mz-mcp.mcpb
+gh release create vX.Y.Z rpgmaker-mz-mcp.mcpb --title vX.Y.Z --notes "..."   # publish the GitHub release + attach the bundle
 ```
 
 The Claude Code plugin needs no separate publish — users' installs update from this repo (the plugin runs the npm package via `npx rpgmaker-mz-mcp@latest`, so bumping npm is what ships new tools).
+
+`git commit --amend` rewrites the commit `npm version`'s tag points to, so `--follow-tags` on the next push won't pick it up — push the tag by name explicitly, and don't forget the `gh release create` step, since nothing before it actually creates the GitHub release.
 
 ## Project structure
 
