@@ -376,10 +376,11 @@ The advertised tool count lives in a few human-facing spots — the README prose
 `package.json` is the source of truth for the version; `npm run sync:version` stamps it into the plugin manifest (`.claude-plugin/plugin.json`), the MCP-registry metadata (`server.json`), and the MCPB manifest (`mcpb/manifest.json`). CI and `prepublishOnly` fail if they drift. A release is:
 
 ```bash
-npm version minor           # or patch/major — bumps package.json + tags
-npm run sync:version        # stamp the new version into the other manifests
-git add -A && git commit --amend --no-edit
-git push && git push origin vX.Y.Z   # amend rewrites the tagged commit, so push the tag explicitly
+npm version minor --no-git-tag-version   # or patch/major — bumps package.json only
+npm run sync:version                     # stamp it into the other three manifests
+git commit -am vX.Y.Z                    # one commit, with every manifest already correct
+git tag vX.Y.Z                           # tag it afterwards, so nothing rewrites it
+git push && git push origin vX.Y.Z
 
 npm publish                 # publish to npm (runs the full gate via prepublishOnly)
 mcp-publisher publish       # update the MCP registry listing (server.json; login: mcp-publisher login github)
@@ -389,7 +390,7 @@ gh release create vX.Y.Z rpgmaker-mz-mcp.mcpb --title vX.Y.Z --notes "..."   # p
 
 The Claude Code plugin needs no separate publish — users' installs update from this repo (the plugin runs the npm package via `npx rpgmaker-mz-mcp@latest`, so bumping npm is what ships new tools).
 
-`git commit --amend` rewrites the commit `npm version`'s tag points to, so `--follow-tags` on the next push won't pick it up — push the tag by name explicitly, and don't forget the `gh release create` step, since nothing before it actually creates the GitHub release.
+**Tag last, and never amend a tagged commit.** `npm version` on its own commits *and* tags before `sync:version` has stamped the other manifests, so the old recipe amended afterwards — which left the tag pointing at the pre-amend commit, with stale manifests and off the branch entirely. `--no-git-tag-version` avoids the whole problem: one commit, then the tag. Push the tag by name (`--follow-tags` is easy to get wrong here), and don't skip `gh release create` — nothing before it creates the GitHub release.
 
 ## Project structure
 
