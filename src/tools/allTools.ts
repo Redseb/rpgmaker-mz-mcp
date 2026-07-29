@@ -23,6 +23,7 @@ import { listToolDefinitions } from './listTools.js';
 import { validationToolDefinitions } from './validationTools.js';
 import { pluginScanToolDefinitions } from './pluginScanTools.js';
 import { batchToolDefinitions } from './batchTools.js';
+import { idToolDefinitions } from './idTools.js';
 
 /**
  * Every tool the server exposes, gathered from the per-domain tool modules.
@@ -52,6 +53,7 @@ export const allToolDefinitions: ToolDefinition[] = [
   ...assetToolDefinitions,
   ...listToolDefinitions,
   ...validationToolDefinitions,
+  ...idToolDefinitions,
   ...batchToolDefinitions,
   ...pluginScanToolDefinitions,
 ];

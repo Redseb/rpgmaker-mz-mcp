@@ -151,6 +151,15 @@ applyToAutotileKind)` — or check with `get_tile_flags`/`check_passability`.
   - Page 2: `conditions: { selfSwitchValid: true, selfSwitchCh: 'A' }`, showing the
     "done" state (opened chest graphic, or empty for a removed boss). `create_map_event`
     deep-merges page `conditions`, so you only pass the two fields.
+- **Never pick a switch/variable/common-event ID by hand — ask `next_free_id`.** These
+  are one global namespace, and reusing an ID some other part of the game already owns
+  fails *silently*: no crash, no validator hit, just a door that turns out to be already
+  open hours into a playtest. `next_free_id(type, count?)` hands back IDs nothing has
+  claimed; `list_allocated_ids(type)` shows what's taken, and with an `id` shows every
+  place that one is used before you touch it. Then **name what you take** with
+  `set_switch_name` / `set_variable_name` — an unnamed switch is a claim nobody wrote
+  down, and naming it is what makes it visible later. (Self switches are exempt: they're
+  scoped to their own event and can't collide.)
 - **Composition loop:** the `build_*` tools return `{ command }` or `{ commands }`;
   concatenate them into a page `list` (for `create_map_event`/`create_npc.commands`) or
   splice with `insert_event_commands(mapId, eventId, pageIndex, commands)`.

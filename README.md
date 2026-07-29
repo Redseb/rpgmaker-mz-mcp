@@ -5,13 +5,13 @@
 # RPG Maker MZ MCP Server
 
 [![CI](https://github.com/Redseb/rpgmaker-mz-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Redseb/rpgmaker-mz-mcp/actions/workflows/ci.yml)
-[![Tools](https://img.shields.io/badge/tools-117-e94560.svg)](#available-tools)
+[![Tools](https://img.shields.io/badge/tools-119-e94560.svg)](#available-tools)
 [![MCP](https://img.shields.io/badge/MCP-stdio-e94560.svg)](https://modelcontextprotocol.io/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178c6.svg)](tsconfig.json)
 [![Node.js >=20](https://img.shields.io/badge/node-%3E%3D20-3fa796.svg)](package.json)
 [![License: MIT](https://img.shields.io/badge/License-MIT-3fa796.svg)](#license)
 
-**117 tools** that let an AI assistant read and write an RPG Maker MZ project directly — actors, classes, skills, items, equipment, states, enemies, troops, common events, maps, tiles, tilesets, events, and system settings — instead of hand-editing everything in the editor.
+**119 tools** that let an AI assistant read and write an RPG Maker MZ project directly — actors, classes, skills, items, equipment, states, enemies, troops, common events, maps, tiles, tilesets, events, and system settings — instead of hand-editing everything in the editor.
 
 _"Add a town under the world map, paint it with grass, and drop in a shopkeeper who sells potions"_ → done, in-project, no editor clicks.
 
@@ -144,7 +144,7 @@ The easiest path is the `.mcpb` bundle from [Releases](https://github.com/Redseb
 
 ## Available tools
 
-All 117 tools, grouped by area. Tools that write to the project accept an optional `dryRun` argument (see [Dry-run preview](#dry-run-preview)); those that can refuse a structurally invalid write also accept `force` (see [Event validation](#event-validation-throw-by-default)).
+All 119 tools, grouped by area. Tools that write to the project accept an optional `dryRun` argument (see [Dry-run preview](#dry-run-preview)); those that can refuse a structurally invalid write also accept `force` (see [Event validation](#event-validation-throw-by-default)).
 
 <details>
 <summary><strong>Expand the full tool reference</strong></summary>
@@ -271,6 +271,11 @@ Read-only builders that return editor-faithful `EventCommand` sequences; land th
 - `validate_event`, `validate_project` — event-command-shape validation (read-only)
 - `validate_references` — cross-file id-integrity audit (party→actor, transfer→map, effect→state/skill/common-event, drops→item, map-tree cycles, …)
 
+### ID allocation
+
+- `list_allocated_ids` — which switch / variable / common-event IDs are already spoken for, derived from the project's own JSON; with `id`, every place that one is referenced
+- `next_free_id` — reserve the next unallocated ID(s) instead of picking one by hand
+
 </details>
 
 ## Input validation
@@ -291,6 +296,16 @@ Because the check runs *before* the commit, a `dryRun` of a write that would be 
 ## Reference linting
 
 `validate_references` performs a **cross-file id-integrity audit** — orthogonal to the command-shape check above. It walks the whole database and flags references that point at something that doesn't exist: a starting party member with no matching actor, a Transfer Player targeting a missing map, a skill effect that adds a non-existent state, an enemy dropping an unknown item, a cyclic map-tree parent, and more. Every check is warn-by-default and guarded against false positives on partially-loaded projects.
+
+## ID allocation
+
+Switches, variables and common-event IDs are one global namespace, and nothing in RPG Maker stops a later edit from claiming an ID an earlier one already used. The failure is silent — no crash, no validator hit, just a door that is inexplicably already open hours into a playtest.
+
+`list_allocated_ids` answers "what's taken?" **from the project files themselves** — never a hand-maintained list, which would drift the moment someone edited in the RPG Maker editor. An ID counts as allocated if it is *declared* (a `System.json` label, a `CommonEvents` row) **or** *referenced* anywhere: event page conditions and command lists, common events, troop pages, and Common Event skill/item effects. Both halves matter — a named-but-unused switch is a claim someone staked, and a used-but-unnamed one is a claim nobody wrote down. Pass `id` to ask the narrower question: where is switch 23 actually used, before I touch it?
+
+`next_free_id` hands back the next unallocated ID(s), strictly above everything already taken. Holes below the highest ID are left alone by default (a hole is often an ID claimed in notes but not yet written); `reuseGaps: true` fills them when you're compacting deliberately. It's read-only — it suggests IDs, it doesn't write them, so name what you take with `set_switch_name` / `set_variable_name` to make the claim visible to whoever edits next. Those two grow the `System.json` name list when the ID is past the end, so an ID from `next_free_id` can always be labelled without opening the editor.
+
+Like the command validator, the usage scan is **curated, not exhaustive**: it covers the commands that carry switch/variable IDs (Control Switches/Variables, Conditional Branch, the "designation by variable" forms of Transfer Player, Change Gold/Items, Change HP/MP/EXP/Level, …), and every report states the command codes it scanned. An ID used only from a `Script` (355) or a plugin command (357) will read as free.
 
 ## Dry-run preview
 

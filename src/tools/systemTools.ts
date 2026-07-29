@@ -39,7 +39,44 @@ export async function getVariables(projectPath: string): Promise<string[]> {
 }
 
 /**
- * Set a variable name
+ * The block the RPG Maker editor grows the switch/variable name lists in. Growing
+ * to a multiple of it keeps a file this server wrote indistinguishable from one
+ * the editor saved.
+ */
+const NAME_BLOCK = 20;
+
+/**
+ * Hard ceiling on automatic growth. A four-digit id is far more likely to be a
+ * typo than a real need, and silently allocating thousands of empty name slots
+ * would bloat System.json without anyone noticing.
+ */
+const MAX_NAME_SLOTS = 5000;
+
+/**
+ * Grow a System.json name array (`switches`/`variables`) so `id` has a slot,
+ * padding with `''` exactly as the editor does. Returns the array unchanged when
+ * the slot already exists.
+ *
+ * Without this an agent working from `next_free_id` hits a wall the moment it
+ * exhausts the default 20 slots — and the only remedy would be "open the RPG
+ * Maker editor", in a workflow whose whole premise is not needing to. Nothing is
+ * lost by growing: the engine reads `$gameSwitches` independently of these
+ * labels, which exist for the editor UI.
+ */
+function growNameSlots(names: string[], id: number, label: string): void {
+  if (id < names.length) return;
+  if (id > MAX_NAME_SLOTS) {
+    throw new Error(
+      `${label} id ${id} is beyond the ${MAX_NAME_SLOTS}-slot ceiling (project declares ${names.length - 1}). That is almost certainly a typo — check next_free_id.`,
+    );
+  }
+  const grown = Math.ceil((id + 1) / NAME_BLOCK) * NAME_BLOCK;
+  while (names.length < grown) names.push('');
+}
+
+/**
+ * Set a variable name. Grows the `variables` array if the id is past the end
+ * (see {@link growNameSlots}).
  */
 export async function setVariableName(
   projectPath: string,
@@ -47,11 +84,10 @@ export async function setVariableName(
   name: string,
 ): Promise<void> {
   const system = await getSystem(projectPath);
-  if (variableId < 1 || variableId >= system.variables.length) {
-    throw new Error(
-      `Variable id ${variableId} is out of range (project has ${system.variables.length - 1} variables). Add more in the editor's Database > System first.`,
-    );
+  if (variableId < 1) {
+    throw new Error(`Variable id ${variableId} is out of range (ids are 1-based).`);
   }
+  growNameSlots(system.variables, variableId, 'Variable');
   system.variables[variableId] = name;
 
   const systemPath = getDataPath(projectPath, 'System.json');
@@ -67,7 +103,8 @@ export async function getSwitches(projectPath: string): Promise<string[]> {
 }
 
 /**
- * Set a switch name
+ * Set a switch name. Grows the `switches` array if the id is past the end (see
+ * {@link growNameSlots}).
  */
 export async function setSwitchName(
   projectPath: string,
@@ -75,11 +112,10 @@ export async function setSwitchName(
   name: string,
 ): Promise<void> {
   const system = await getSystem(projectPath);
-  if (switchId < 1 || switchId >= system.switches.length) {
-    throw new Error(
-      `Switch id ${switchId} is out of range (project has ${system.switches.length - 1} switches). Add more in the editor's Database > System first.`,
-    );
+  if (switchId < 1) {
+    throw new Error(`Switch id ${switchId} is out of range (ids are 1-based).`);
   }
+  growNameSlots(system.switches, switchId, 'Switch');
   system.switches[switchId] = name;
 
   const systemPath = getDataPath(projectPath, 'System.json');
@@ -366,7 +402,8 @@ export const systemToolDefinitions: ToolDefinition[] = [
   {
     name: 'set_variable_name',
     mutates: true,
-    description: 'Set a variable name',
+    description:
+      "Set a variable name. Grows the project's variable list if the id is past the end (padded to the editor's 20-slot block), so an id from next_free_id can always be labelled. Naming a variable as soon as you claim it is what makes it visible to the next session — see list_allocated_ids.",
     inputSchema: {
       variableId: z.number().int().positive().describe('The 1-based variable ID'),
       name: z.string().describe('The name to assign'),
@@ -385,7 +422,8 @@ export const systemToolDefinitions: ToolDefinition[] = [
   {
     name: 'set_switch_name',
     mutates: true,
-    description: 'Set a switch name',
+    description:
+      "Set a switch name. Grows the project's switch list if the id is past the end (padded to the editor's 20-slot block), so an id from next_free_id can always be labelled. Naming a switch as soon as you claim it is what makes it visible to the next session — see list_allocated_ids.",
     inputSchema: {
       switchId: z.number().int().positive().describe('The 1-based switch ID'),
       name: z.string().describe('The name to assign'),

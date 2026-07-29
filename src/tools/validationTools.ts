@@ -85,8 +85,11 @@ async function loadArray<T>(projectPath: string, file: string): Promise<(T | nul
  * soft: a missing/unreadable file yields an empty array (or `null` for
  * `Animations.json`/`System.json`), so the audit degrades to fewer checks rather
  * than throwing.
+ *
+ * Shared with the id-allocation scan (`tools/idTools.ts`), which needs the same
+ * whole-project snapshot.
  */
-async function loadProjectData(projectPath: string): Promise<ProjectData> {
+export async function loadProjectData(projectPath: string): Promise<ProjectData> {
   const mapInfos = await loadArray<MapInfo>(projectPath, 'MapInfos.json');
 
   const maps: ProjectData['maps'] = [];
