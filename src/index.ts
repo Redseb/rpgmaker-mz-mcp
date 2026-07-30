@@ -11,6 +11,8 @@ import { validateProjectPath } from './utils/fileHandler.js';
 import { ToolContext, ToolDefinition, buildRegistry, schemaFor } from './registry.js';
 import { CommitContext, commitStore } from './utils/commit.js';
 import { allToolDefinitions } from './tools/allTools.js';
+import { loadProjectTextMetrics } from './tools/projectConfig.js';
+import { setActiveTextMetrics } from './validation/textMetrics.js';
 
 /**
  * RPG Maker MZ MCP Server
@@ -103,6 +105,12 @@ function buildServer(initialProjectPath: string): McpServer {
             if (!(await validateProjectPath(projectPath))) {
               throw new Error(`Invalid RPG Maker MZ project path: ${projectPath}`);
             }
+            // Install this project's Show Text width metrics before anything runs.
+            // The line-width check sits deep inside validateCommandList, which has no
+            // project path in scope and eight call sites across six modules — setting
+            // it once here beats making all of them async for a per-project constant.
+            // Cached by mtime, fails soft to the built-in character estimate.
+            setActiveTextMetrics(await loadProjectTextMetrics(projectPath));
           }
 
           const result = await runTool(def, { projectPath, setProjectPath }, args);
