@@ -293,6 +293,28 @@ Because the check runs *before* the commit, a `dryRun` of a write that would be 
 
 `validate_event` / `validate_project` remain read-only audits: they report both tiers (each finding carries a `severity`) without changing anything.
 
+### Text width: teaching it your font
+
+The over-long-text-line warning is measured in **characters** by default — 55 per line, 38 when a face graphic is shown — which suits the stock RTP font and needs no setup. If your project ships a different font, that estimate goes wrong in one of two directions: a **narrower** font makes it warn on lines that fit comfortably, and a **wider or larger** one makes it stay quiet on lines that really are cut off (38 characters of a 24px glyph is 912px in a 616px window). No single character limit fixes both, because glyph widths in a proportional font span a wide range — a full stop can be a third the width of a capital.
+
+Drop a **`.rpgmaker-mcp.json`** in the project root to replace the estimate with a real measurement:
+
+```json
+{
+  "text": {
+    "lineBudget": { "noFace": 784, "withFace": 616 },
+    "nameBudgetChars": 8,
+    "charWidths": { "_default": 13, "a": 11.38, ".": 4.88, " ": 8.12 }
+  }
+}
+```
+
+- **`lineBudget`** — the message window's usable width, without and with a face graphic. In pixels if you give `charWidths`, otherwise in characters (a bare `lineBudget` is just a character-limit override).
+- **`charWidths`** — per-character advance; `_default` covers anything unlisted. Get these from the engine itself: `Window_Base.textWidth(c.repeat(40)) / 40` in a running game is exact.
+- **`nameBudgetChars`** — how wide to assume `\N[3]` / `\P[1]` renders. A name is typed by the player at runtime, so budget the Name Input `maxLength` (usually 8) rather than the default name, or a long name overflows a line that fitted while you were testing. Defaults to `0`, which ignores name escapes as before.
+
+Everything fails soft: no file, bad JSON, or a malformed `text` section leaves the built-in estimate in place, so a broken config is never worse than no config. The file is re-read when its mtime changes, and warnings then report real widths (`Show Text line is 650px but the message window fits 616px with a face shown`).
+
 ## Reference linting
 
 `validate_references` performs a **cross-file id-integrity audit** — orthogonal to the command-shape check above. It walks the whole database and flags references that point at something that doesn't exist: a starting party member with no matching actor, a Transfer Player targeting a missing map, a skill effect that adds a non-existent state, an enemy dropping an unknown item, a cyclic map-tree parent, and more. Every check is warn-by-default and guarded against false positives on partially-loaded projects.
