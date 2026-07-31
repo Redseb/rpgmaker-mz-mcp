@@ -237,18 +237,12 @@ describe('loadProjectTextMetrics', () => {
 
   it('re-reads after the file changes', async () => {
     const file = join(dir, PROJECT_CONFIG_FILE);
-    await writeFile(
-      file,
-      JSON.stringify({ text: { lineBudget: { noFace: 100, withFace: 50 } } }),
-    );
+    await writeFile(file, JSON.stringify({ text: { lineBudget: { noFace: 100, withFace: 50 } } }));
     expect((await loadProjectTextMetrics(dir))?.budget.noFace).toBe(100);
 
     // mtime has 1ms resolution on some filesystems; make the change unambiguous.
     await new Promise((r) => setTimeout(r, 10));
-    await writeFile(
-      file,
-      JSON.stringify({ text: { lineBudget: { noFace: 200, withFace: 50 } } }),
-    );
+    await writeFile(file, JSON.stringify({ text: { lineBudget: { noFace: 200, withFace: 50 } } }));
     expect((await loadProjectTextMetrics(dir))?.budget.noFace).toBe(200);
   });
 
