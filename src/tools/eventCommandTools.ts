@@ -3,6 +3,7 @@ import { getMapPath, getDataPath } from '../utils/fileHandler.js';
 import { commitChange } from '../utils/commit.js';
 import { EventCommand } from '../utils/types.js';
 import { ToolDefinition } from '../registry.js';
+import { summarizeCommandListResult } from '../utils/responseSummary.js';
 import {
   validateCommandList,
   textLineWidthWarnings,
@@ -1028,8 +1029,9 @@ export const eventCommandToolDefinitions: ToolDefinition[] = [
     name: 'insert_event_commands',
     mutates: true,
     forceable: true,
+    summarize: summarizeCommandListResult,
     description:
-      'Insert a pre-built sequence of event commands (from the build_* builders) into any of the three command lists an MZ project has — the mutating companion to the read-only builders. Splices before the list’s end marker (or at `position`). target "map_event" (the default) needs mapId + eventId + pageIndex; "common_event" needs commonEventId; "troop_page" needs troopId + pageIndex. The resulting list is validated before writing: a structural problem (wrong parameter count for a command code, a list left unterminated) refuses the write and saves nothing — pass force: true to override. Advisory findings (unrecognized code, over-long text line) are returned as `warnings` and never block. Returns { target, id, list, warnings? }.',
+      'Insert a pre-built sequence of event commands (from the build_* builders) into any of the three command lists an MZ project has — the mutating companion to the read-only builders. Splices before the list’s end marker (or at `position`). target "map_event" (the default) needs mapId + eventId + pageIndex; "common_event" needs commonEventId; "troop_page" needs troopId + pageIndex. The resulting list is validated before writing: a structural problem (wrong parameter count for a command code, a list left unterminated) refuses the write and saves nothing — pass force: true to override. Advisory findings (unrecognized code, over-long text line) are returned as `warnings` and never block. Returns { target, id, listLength, listCodes, warnings? } — the resulting list as its length and its command CODES, which is what you verify a splice against; pass verbose: true for the full list with parameters, or read it back with get_map_event.',
     inputSchema: {
       target: z
         .enum(['map_event', 'common_event', 'troop_page'])

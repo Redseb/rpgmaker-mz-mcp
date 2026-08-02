@@ -22,6 +22,7 @@ import { PreCommit, writeGate } from '../validation/gate.js';
 import { spliceIntoList } from '../events/commandBuilders.js';
 import { layeredPassability } from '../tiles/tileFlags.js';
 import { refExists } from '../validation/references.js';
+import { summarizeEventResult, summarizeMapResult } from '../utils/responseSummary.js';
 
 /** Dimensions the RPG Maker MZ editor defaults to when creating a new map. */
 const DEFAULT_MAP_WIDTH = 17;
@@ -1186,6 +1187,7 @@ export const mapToolDefinitions: ToolDefinition[] = [
     name: 'update_map_event',
     mutates: true,
     forceable: true,
+    summarize: summarizeEventResult,
     description:
       "Update a map event's properties. Refuses the write (nothing is saved) if the resulting event is structurally invalid — pass force: true to override.",
     inputSchema: {
@@ -1255,6 +1257,7 @@ export const mapToolDefinitions: ToolDefinition[] = [
     name: 'add_event_command',
     mutates: true,
     forceable: true,
+    summarize: summarizeEventResult,
     description:
       'Add a command to an event page. Refuses the write (nothing is saved) if the resulting page is structurally invalid — e.g. the command has the wrong parameter count for its code. Pass force: true to override.',
     inputSchema: {
@@ -1292,8 +1295,9 @@ export const mapToolDefinitions: ToolDefinition[] = [
   {
     name: 'update_map',
     mutates: true,
+    summarize: summarizeMapResult,
     description:
-      "Update a map's top-level properties (name, display name, bgm, encounters, etc.). Does not repaint tiles. Cannot change width/height (that would desync the tile data array) — use resize_map for that.",
+      "Update a map's top-level properties (name, display name, bgm, encounters, etc.). Does not repaint tiles. Cannot change width/height (that would desync the tile data array) — use resize_map for that. The echo omits the tile `data` array and the `events` map (neither is touched here) and reports dataTileCount/eventCount instead; pass verbose: true or use get_map for the full record.",
     inputSchema: {
       mapId: z.number().int().positive().describe('The ID of the map'),
       updates: z.record(z.string(), z.unknown()).describe('Partial MapData properties to merge'),
@@ -1311,6 +1315,7 @@ export const mapToolDefinitions: ToolDefinition[] = [
   {
     name: 'resize_map',
     mutates: true,
+    summarize: summarizeMapResult,
     description:
       "Resize a map to new width/height, safely repadding every z-layer of its tile data (existing tiles kept where the old and new grids overlap; new cells blank; shrinking crops). This is the ONLY safe way to change a map's dimensions — update_map refuses a width/height change because it would not resize the tile array. Warns about any event left outside the new bounds.",
     inputSchema: {

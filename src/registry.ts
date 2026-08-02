@@ -56,6 +56,21 @@ export interface ToolDefinition {
    * project path before its handler runs.
    */
   requiresProject?: boolean;
+  /**
+   * Condense this tool's result before it is serialized back to the caller.
+   *
+   * Set it on write tools that would otherwise echo a large record they did not
+   * meaningfully change — `update_map` replaying every event's command list,
+   * `insert_event_commands` re-printing the whole list on every splice. The
+   * caller paying for that echo is an AI assistant whose context is the scarce
+   * resource, and the full record is always one read-only call away.
+   *
+   * Declaring one also advertises `verbose` on the tool (see `VERBOSE_SHAPE`),
+   * so a caller who does want the full record can ask for it per call. Tools
+   * without a summarizer do not advertise `verbose` — the same discipline
+   * `force` follows, since an advertised argument that does nothing is a lie.
+   */
+  summarize?: (result: unknown) => unknown;
 }
 
 /**
@@ -85,17 +100,49 @@ export const FORCE_SHAPE = {
 } as const;
 
 /**
+ * The shared `verbose` argument advertised on tools that condense their result.
+ * Injected the same way `force` is, and only where a `summarize` function exists
+ * for it to override.
+ */
+export const VERBOSE_SHAPE = {
+  verbose: z
+    .boolean()
+    .optional()
+    .describe(
+      'Echo the full written record instead of the default summary. Off by default: the response reports identity, counts and command-list shape, which is what you would assert on, and omits the parameters/conditions you would only re-read. Read the full record with the matching get_* tool.',
+    ),
+} as const;
+
+/**
  * Resolve the Zod raw shape a tool should be registered with. Mutating tools get
- * the shared `dryRun` argument folded in, and those that gate on validation also
- * get `force`.
+ * the shared `dryRun` argument folded in, those that gate on validation also get
+ * `force`, and those that condense their echo also get `verbose`.
  */
 export function schemaFor(def: ToolDefinition): InputShape {
-  if (!def.mutates) return def.inputSchema;
+  const withVerbose = def.summarize ? VERBOSE_SHAPE : {};
+  if (!def.mutates) return { ...def.inputSchema, ...withVerbose };
   return {
     ...def.inputSchema,
     ...DRY_RUN_SHAPE,
     ...(def.forceable ? FORCE_SHAPE : {}),
+    ...withVerbose,
   };
+}
+
+/**
+ * Apply a tool's summarizer to its result unless the caller asked for the full
+ * record. Kept here rather than in the server entry point so the rule is
+ * testable without standing up an McpServer, and so the dry-run path can reuse
+ * it for `wouldReturn` — a preview that echoed the full record while the real
+ * call summarized it would be its own trap.
+ */
+export function shapeResult(
+  def: ToolDefinition,
+  result: unknown,
+  args: Record<string, unknown>,
+): unknown {
+  if (!def.summarize || args.verbose === true || result === undefined) return result;
+  return def.summarize(result);
 }
 
 /** Index definitions by name, failing loudly on duplicates. */

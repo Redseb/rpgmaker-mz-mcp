@@ -26,6 +26,7 @@ import {
 } from '../events/commandBuilders.js';
 import { refExists } from '../validation/references.js';
 import { assetNameWarning } from './assetTools.js';
+import { summarizeEventResult } from '../utils/responseSummary.js';
 
 /** Event trigger names ↔ the on-disk `trigger` code. */
 const TRIGGER_CODE = {
@@ -472,6 +473,7 @@ export const eventPageToolDefinitions: ToolDefinition[] = [
   {
     name: 'set_event_page',
     mutates: true,
+    summarize: summarizeEventResult,
     forceable: true,
     description:
       "Update an existing event page's graphic and behavior in one call, without rebuilding the whole page or touching its command list: sprite (characterName/characterIndex/direction/pattern or a tileId), trigger, priority, movement (type/speed/frequency/route), and the through/walkAnime/stepAnime/directionFix flags. Graphic fields merge onto the current image; warns (never blocks) on an unknown characterName. Refuses the write if the change would leave the event unreachable (an action-button page with priority `below` on an impassable tile) — pass force: true to override.",

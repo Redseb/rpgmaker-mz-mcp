@@ -3,6 +3,7 @@ import { readJsonFile, readJsonArraySoft, getDataPath } from '../utils/fileHandl
 import { commitChange } from '../utils/commit.js';
 import { Enemy, Troop, TroopMember, TroopPage } from '../utils/types.js';
 import { ToolDefinition } from '../registry.js';
+import { summarizeTroopResult } from '../utils/responseSummary.js';
 import { definedOnly } from '../utils/records.js';
 import { validateCommandList, ValidationWarning } from '../validation/eventCommands.js';
 import { PreCommit, writeGate } from '../validation/gate.js';
@@ -354,6 +355,7 @@ export const battleToolDefinitions: ToolDefinition[] = [
     name: 'create_troop',
     mutates: true,
     forceable: true,
+    summarize: summarizeTroopResult,
     description:
       'Create a new troop (enemy battle group) in data/Troops.json. `name` is required; `members` defaults to empty and `pages` to one blank battle-event page. Every member.enemyId must reference an existing enemy. A structurally invalid battle-event page refuses the write (nothing is saved) — pass force: true to override.',
     inputSchema: {
@@ -385,6 +387,7 @@ export const battleToolDefinitions: ToolDefinition[] = [
     name: 'update_troop',
     mutates: true,
     forceable: true,
+    summarize: summarizeTroopResult,
     description:
       "Update a troop's properties (shallow merge). If `members` is provided, each enemyId is validated to exist. A structurally invalid battle-event page refuses the write (nothing is saved) — pass force: true to override.",
     inputSchema: {
