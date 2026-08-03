@@ -354,6 +354,24 @@ Every tool that writes to the project accepts an optional `dryRun` argument. Whe
 
 All writes go through a single choke point that skips no-op writes and keeps the on-disk JSON in the editor's compact single-line format. File deletions (e.g. `delete_map`) share the same dry-run machinery.
 
+## Quiet write echoes
+
+A write tool that echoes the whole record back costs the one caller that always pays for it — an AI assistant, whose context is the scarce resource. So the tools that would otherwise replay a command list or a map's events **return a summary by default**:
+
+| tool | echoes |
+|---|---|
+| `update_map`, `resize_map` | the map without its tile `data` or its `events`, plus `dataTileCount` / `eventCount` |
+| `update_map_event`, `set_event_page`, `add_event_command` | event identity + per-page `trigger` / `priorityType` / `moveType` / graphic / `listLength` |
+| `insert_event_commands` | `listLength` + `listCodes` — the resulting command **codes**, without the parameters |
+| `create_common_event`, `update_common_event` | identity, trigger wiring, `listLength` + `listCodes` |
+| `create_troop`, `update_troop` | identity, members, per-page `listLength` |
+
+The rule: **keep what you would assert on, drop what you would only re-read.** Command codes stay, because they are how you verify a splice landed where you asked (`is the 302 still after the two 101s`); command parameters go, because they are what you just wrote.
+
+Pass **`verbose: true`** on any of those calls for the old full record, or read it back with `get_map` / `get_map_event` / `get_database`. `warnings` always survive summarization, and a dry-run's `wouldReturn` is summarized the same way so a preview and the real call report the same shape.
+
+Measured on six calls from one real authoring session: **115,080 → 3,672 characters (-97%)**. A single `update_map` that set a map's BGM was echoing 46,846 characters of dialogue back at the caller.
+
 ## Custom-tileset catalog skill
 
 The default tilesets are cataloged out of the box. For a **custom** (non-RTP) tileset, a bundled Claude skill under `.claude/skills/tileset-catalog/` slices each sheet into labelled samples, has Claude vision-name them, and writes a versioned, project-scoped catalog to `data/tilecatalog/` — after which `find_tile`/`get_tile_catalog` resolve names for that sheet too. Those drafts also record what each tile *looks like*, so `find_tile` with `searchDescriptions: true` can match that text when a machine-drafted name is too terse to search by. The skill ships a dependency-free PNG codec and engine-exact tile geometry, so it runs anywhere Node does.

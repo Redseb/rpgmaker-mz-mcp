@@ -8,7 +8,7 @@ import { basename } from 'path';
 import { readFileSync } from 'fs';
 
 import { validateProjectPath } from './utils/fileHandler.js';
-import { ToolContext, ToolDefinition, buildRegistry, schemaFor } from './registry.js';
+import { ToolContext, ToolDefinition, buildRegistry, schemaFor, shapeResult } from './registry.js';
 import { CommitContext, commitStore } from './utils/commit.js';
 import { allToolDefinitions } from './tools/allTools.js';
 import { loadProjectTextMetrics } from './tools/projectConfig.js';
@@ -43,6 +43,10 @@ function serverVersion(): string {
  * Run a tool. Mutating tools execute inside a commit context so that, when
  * `dryRun` is requested, every write is intercepted and returned as a preview
  * diff instead of being applied.
+ *
+ * A tool that declares a `summarize` function has its result condensed on the
+ * way out — including the dry-run `wouldReturn`, so a preview and the real call
+ * report the same shape. `verbose: true` opts out per call.
  */
 async function runTool(
   tool: ToolDefinition,
@@ -50,7 +54,7 @@ async function runTool(
   args: Record<string, unknown>,
 ): Promise<unknown> {
   if (!tool.mutates) {
-    return tool.handler(ctx, args);
+    return shapeResult(tool, await tool.handler(ctx, args), args);
   }
 
   const dryRun = args.dryRun === true;
@@ -58,8 +62,10 @@ async function runTool(
   const result = await commitStore.run(commitCtx, () => tool.handler(ctx, args));
 
   if (!dryRun) {
-    return result;
+    return shapeResult(tool, result, args);
   }
+
+  const wouldReturn = shapeResult(tool, result, args);
 
   return {
     dryRun: true,
@@ -73,7 +79,7 @@ async function runTool(
     // dry-run preview shows validation warnings that would otherwise be
     // discarded (the documented dry-run gap). Omitted when the handler returns
     // nothing.
-    ...(result === undefined ? {} : { wouldReturn: result }),
+    ...(wouldReturn === undefined ? {} : { wouldReturn }),
   };
 }
 

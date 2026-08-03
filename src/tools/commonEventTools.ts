@@ -3,6 +3,7 @@ import { readJsonFile, getDataPath } from '../utils/fileHandler.js';
 import { commitChange } from '../utils/commit.js';
 import { CommonEvent, EventCommand } from '../utils/types.js';
 import { ToolDefinition } from '../registry.js';
+import { summarizeCommonEventResult } from '../utils/responseSummary.js';
 import { definedOnly } from '../utils/records.js';
 import { validateCommandList } from '../validation/eventCommands.js';
 import { PreCommit, writeGate } from '../validation/gate.js';
@@ -117,6 +118,7 @@ export const commonEventToolDefinitions: ToolDefinition[] = [
     name: 'create_common_event',
     mutates: true,
     forceable: true,
+    summarize: summarizeCommonEventResult,
     description:
       "Create a new common event (reusable event-command list) in data/CommonEvents.json. Only `name` is required; omitted fields use the editor's new-slot defaults (empty command list, trigger 0 = call-only, switchId 1). Allocates and returns the next unused id. A structurally invalid command list refuses the write (nothing is saved) — pass force: true to override.",
     inputSchema: {
@@ -153,6 +155,7 @@ export const commonEventToolDefinitions: ToolDefinition[] = [
     name: 'update_common_event',
     mutates: true,
     forceable: true,
+    summarize: summarizeCommonEventResult,
     description:
       "Update a common event's properties (shallow merge into the existing record). Use for name, trigger, switchId, or to replace the whole command list. A structurally invalid command list refuses the write (nothing is saved) — pass force: true to override.",
     inputSchema: {
