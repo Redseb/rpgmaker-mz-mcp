@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "rpgmaker-mz-mcp",
   "display_name": "RPG Maker MZ",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Author RPG Maker MZ games with Claude: maps, tile painting, events, database editing, and validation.",
   "author": {
     "name": "Mikolaj Zyzanski",
