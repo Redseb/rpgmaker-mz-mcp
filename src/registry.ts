@@ -71,6 +71,13 @@ export interface ToolDefinition {
    * `force` follows, since an advertised argument that does nothing is a lie.
    */
   summarize?: (result: unknown) => unknown;
+  /**
+   * PNG files to attach to the response as MCP image content, alongside the JSON
+   * text — for the headless-render tools, so a client can *see* a render without
+   * a second file read. Returns absolute paths (or none, e.g. unless the caller
+   * asked for inline images). Unreadable files are skipped, never fatal.
+   */
+  images?: (result: unknown, args: Record<string, unknown>) => string[];
 }
 
 /**

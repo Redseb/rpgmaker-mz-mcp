@@ -5,13 +5,13 @@
 # RPG Maker MZ MCP Server
 
 [![CI](https://github.com/Redseb/rpgmaker-mz-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Redseb/rpgmaker-mz-mcp/actions/workflows/ci.yml)
-[![Tools](https://img.shields.io/badge/tools-126-e94560.svg)](#available-tools)
+[![Tools](https://img.shields.io/badge/tools-128-e94560.svg)](#available-tools)
 [![MCP](https://img.shields.io/badge/MCP-stdio-e94560.svg)](https://modelcontextprotocol.io/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178c6.svg)](tsconfig.json)
 [![Node.js >=20](https://img.shields.io/badge/node-%3E%3D20-3fa796.svg)](package.json)
 [![License: MIT](https://img.shields.io/badge/License-MIT-3fa796.svg)](#license)
 
-**126 tools** that let an AI assistant read and write an RPG Maker MZ project directly — actors, classes, skills, items, equipment, states, enemies, troops, common events, maps, tiles, tilesets, events, and system settings — instead of hand-editing everything in the editor.
+**128 tools** that let an AI assistant read and write an RPG Maker MZ project directly — actors, classes, skills, items, equipment, states, enemies, troops, common events, maps, tiles, tilesets, events, and system settings — instead of hand-editing everything in the editor.
 
 _"Add a town under the world map, paint it with grass, and drop in a shopkeeper who sells potions"_ → done, in-project, no editor clicks.
 
@@ -76,6 +76,7 @@ New here? Read [SETUP.md](SETUP.md) for the full walkthrough and [EXAMPLES.md](E
 - **Event-command builders** — high-level, read-only builders that emit the exact `EventCommand` sequences the editor writes (including tricky recursive branch blocks and continuation rows), landed on a page via `insert_event_commands`. Covers dialogue & flow, game-state changes, presentation/transitions, and scene processing.
 - **Event & NPC ergonomics** — `create_npc` places a complete talking NPC in one call; `set_event_page` merges a page's graphic + behavior in place.
 - **Asset awareness** — `list_assets` enumerates valid character/face/tileset/audio names so events never reference a missing file.
+- **See and play the build** — `render_map` screenshots a map exactly as the engine draws it (whole map or a game-screen view) and `run_playtest` drives a scripted headless session (load a state, trigger events, read dialogue, pick choices, walk, auto-battle, screenshot), both reporting console errors and missing assets. Validators prove structure; these show what the player sees.
 - **Correctness layer** — Zod-validated inputs, throw-by-default event validation (a structurally invalid write is refused, not saved-and-warned-about), a cross-file reference linter (`validate_references`), and a dry-run/diff preview on every write.
 
 ## How it fits together
@@ -144,7 +145,7 @@ The easiest path is the `.mcpb` bundle from [Releases](https://github.com/Redseb
 
 ## Available tools
 
-All 126 tools, grouped by area. Tools that write to the project accept an optional `dryRun` argument (see [Dry-run preview](#dry-run-preview)); those that can refuse a structurally invalid write also accept `force` (see [Event validation](#event-validation-throw-by-default)).
+All 128 tools, grouped by area. Tools that write to the project accept an optional `dryRun` argument (see [Dry-run preview](#dry-run-preview)); those that can refuse a structurally invalid write also accept `force` (see [Event validation](#event-validation-throw-by-default)).
 
 <details>
 <summary><strong>Expand the full tool reference</strong></summary>
@@ -256,6 +257,26 @@ Read-only builders that return editor-faithful `EventCommand` sequences; land th
 ### Web export
 
 - `export_web` — build a **pruned HTML5 deployment** for itch.io or any static host: `index.html`, `js/`, `css/`, `fonts/`, `icon/`, `effects/` and `data/*.json`, plus only the `img/`/`audio/`/`movies/` files something references (every string in the data files, string literals in the core engine scripts and plugins, plugin `@default`s; `img/system/` is always kept, and every `.ogg`/`.m4a` variant of a kept track). Writes the folder to `outDir` and, with `zip` (default), `<outDir>.zip` with `index.html` at the archive root. Returns file/byte counts, kept/dropped asset counts and paths, the screen size from `System.advanced` (use it as the itch embed size), and warnings past itch's 1000-file / 200 MB-per-file limits. `prune: false` copies every asset — use it if a plugin builds asset names at runtime. Writes nothing inside the project; `outDir` can't be the project or sit inside a folder it copies, and an existing non-empty `outDir` is only replaced if it's a previous `export_web` output.
+
+### Headless render & playtest
+
+Boots the project's own `index.html` in a headless Chromium to check what validators can't: how a map looks and how it plays. Read-only — nothing is written into the project; PNGs go to `<os tmpdir>/rpgmaker-mz-mcp/renders/` unless you pass `out`. Pass `inline: true` to also get the PNG(s) back as image content in the tool response.
+
+- `render_map` — screenshot one map. By default it renders the **whole map** in one image (the canvas is resized to `width×height×48` px, the player is hidden, autorun/parallel events are frozen so a cutscene can't cover the map, and the map-name banner is off). Pass `x` + `y` to get a normal 816×624 game-screen view centred on that tile instead (the player is shown). `showEvents: false` draws bare tiles; `switches` turns switches on first to see a later story state; `runEvents: true` lets events run. Returns the PNG path and `problems`: console errors, page errors, and HTTP 404s (a missing image is drawn blank and listed there instead of stopping the engine on its load-error screen). Maps over 4800 px on a side need the `x`/`y` view.
+- `run_playtest` — run a script of steps in one browser session. Each step returns `ok` plus details, and the run stops at the first failing step:
+  - `load` `{mapId, x, y, direction?, party?, level?, gold?, switches?, variables?, selfSwitches?, items?, equip?, encounters?}` starts a new game at that spot with that state. Random encounters stay off unless `encounters: true`.
+  - `startEvent` `{eventId}` triggers a map event.
+  - `advanceText` `{maxMs?}` presses OK until the event goes idle. It stops early at an open choice list or a battle, and returns the message lines shown (with speaker names) and any open choices.
+  - `choose` `{index}` picks a 0-based choice.
+  - `walk` `{direction, steps?}` walks tile by tile. It reports the tile it ended on and `blockedAt` if a tile refused entry, which is how you find invisible walls. It stops early when a touch event fires.
+  - `press` `{button, times?}` and `wait` `{ms}`.
+  - `autoBattle` `{troopId?, canEscape?, canLose?, maxMs?}` fights a battle that has already started, or starts `troopId`, on auto AI. It reports `victory`/`defeat`/`escaped` and the final HP of both sides.
+  - `screenshot` `{name?}` saves a PNG.
+  - `eval` `{script}` returns the value of a JS expression evaluated in the game page, such as `"$gameSwitches.value(3)"`.
+
+  The response ends with `finalState` (scene, map, position, gold, party) and `problems`. `startEvent` and `autoBattle` refuse to start while an event or message is still running (for example, a map's autorun cutscene right after `load`) and tell you to `advanceText` first.
+
+**Requirements.** Both tools need `playwright-core`. It's an **optional dependency**, so a failed install never breaks the other tools; these two just return an error that tells you how to fix it. They also need a Chromium. No browser is downloaded: the server uses the newest `chrome-headless-shell` (or full Chromium) in the Playwright cache (`~/Library/Caches/ms-playwright`, `~/.cache/ms-playwright`, `%LOCALAPPDATA%\ms-playwright`, or `PLAYWRIGHT_BROWSERS_PATH`). If you don't have one, run `npx playwright install chromium-headless-shell`, or set `RPGMAKER_MCP_CHROMIUM` to any Chrome/Chromium executable. Each call takes about 1–2 s to boot, plus however long the script runs.
 
 ### System & vocabulary
 
@@ -475,6 +496,8 @@ rpgmaker-mz-mcp/
 │   ├── events/               # Pure event-command builders (no I/O)
 │   ├── tiles/                # Tile subsystem: codec, autotile solver, paint core,
 │   │                         #   flag codec, and the semantic catalog
+│   ├── playtest/             # Headless engine driver: Chromium discovery, static server,
+│   │                         #   render_map + run_playtest (optional playwright-core)
 │   ├── validation/           # Known-command tables + event/move/plugin/reference validators
 │   └── utils/                # File I/O, the commit choke point, and RPG Maker MZ types
 ├── test/                     # Vitest suite

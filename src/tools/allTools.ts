@@ -26,6 +26,7 @@ import { batchToolDefinitions } from './batchTools.js';
 import { idToolDefinitions } from './idTools.js';
 import { exportToolDefinitions } from './exportTools.js';
 import { recordToolDefinitions } from './recordTools.js';
+import { playtestToolDefinitions } from './playtestTools.js';
 
 /**
  * Every tool the server exposes, gathered from the per-domain tool modules.
@@ -60,4 +61,5 @@ export const allToolDefinitions: ToolDefinition[] = [
   ...recordToolDefinitions,
   ...pluginScanToolDefinitions,
   ...exportToolDefinitions,
+  ...playtestToolDefinitions,
 ];

@@ -6,6 +6,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 import { basename } from 'path';
 import { readFileSync } from 'fs';
+import { readFile } from 'fs/promises';
 
 import { validateProjectPath } from './utils/fileHandler.js';
 import { ToolContext, ToolDefinition, buildRegistry, schemaFor, shapeResult } from './registry.js';
@@ -120,7 +121,18 @@ function buildServer(initialProjectPath: string): McpServer {
           }
 
           const result = await runTool(def, { projectPath, setProjectPath }, args);
-          return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+          const content: CallToolResult['content'] = [
+            { type: 'text', text: JSON.stringify(result, null, 2) },
+          ];
+          for (const file of def.images?.(result, args) ?? []) {
+            try {
+              const data = (await readFile(file)).toString('base64');
+              content.push({ type: 'image', data, mimeType: 'image/png' });
+            } catch {
+              // The path is already in the JSON text; a missing file just isn't inlined.
+            }
+          }
+          return { content };
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           return { content: [{ type: 'text', text: `Error: ${message}` }], isError: true };
