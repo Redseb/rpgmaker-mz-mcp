@@ -25,6 +25,8 @@ import {
   TransferFade,
 } from '../events/commandBuilders.js';
 import { refExists } from '../validation/references.js';
+import { WrapMode } from '../validation/textMetrics.js';
+import { showTextWrapShape } from './eventCommandTools.js';
 import { assetNameWarning } from './assetTools.js';
 import { summarizeEventResult } from '../utils/responseSummary.js';
 
@@ -186,6 +188,7 @@ export interface CreateNpcOptions {
   faceName?: string;
   faceIndex?: number;
   speakerName?: string;
+  wrap?: boolean | WrapMode;
   commands?: EventCommand[];
   trigger?: number;
   priorityType?: number;
@@ -232,6 +235,7 @@ export async function createNpc(
       faceName: options.faceName,
       faceIndex: options.faceIndex,
       speakerName: options.speakerName,
+      wrap: options.wrap,
     };
     page.list = terminated(showText(options.text, textOptions));
   }
@@ -567,7 +571,7 @@ export const eventPageToolDefinitions: ToolDefinition[] = [
     mutates: true,
     forceable: true,
     description:
-      'Create a complete, placed NPC event on a map in one call — a graphic + trigger + a talk list. Provide `text` (built into a Show Text sequence, with optional face/speaker) or an explicit `commands` array (commands wins if both given). Defaults to a solid, action-button NPC facing down. Warns (never blocks) on an unknown characterName, and on NO graphic at all (an NPC with no characterName is invisible in-game — use create_map_event for an intentionally-invisible trigger). The one-shot "make a talking NPC that says X" primitive.',
+      'Create a complete, placed NPC event on a map in one call — a graphic + trigger + a talk list. Provide `text` (built into a Show Text sequence, with optional face/speaker; `wrap: true` word-wraps paragraphs into 4-line message boxes) or an explicit `commands` array (commands wins if both given). Defaults to a solid, action-button NPC facing down. Warns (never blocks) on an unknown characterName, and on NO graphic at all (an NPC with no characterName is invisible in-game — use create_map_event for an intentionally-invisible trigger). The one-shot "make a talking NPC that says X" primitive.',
     inputSchema: {
       mapId: z.number().int().positive().describe('The ID of the map to place the NPC on'),
       x: z.number().int().describe('X tile position'),
@@ -597,6 +601,7 @@ export const eventPageToolDefinitions: ToolDefinition[] = [
         .describe('text: face image basename (from list_assets("faces"))'),
       faceIndex: z.number().int().optional().describe('text: face index 0–7'),
       speakerName: z.string().optional().describe('text: MZ name-box speaker name'),
+      wrap: showTextWrapShape,
       commands: z
         .array(
           z.object({
@@ -630,6 +635,7 @@ export const eventPageToolDefinitions: ToolDefinition[] = [
         faceName: args.faceName,
         faceIndex: args.faceIndex,
         speakerName: args.speakerName,
+        wrap: args.wrap,
         commands: args.commands !== undefined ? asCommands(args.commands) : undefined,
         trigger: args.trigger !== undefined ? TRIGGER_CODE[args.trigger as TriggerName] : undefined,
         priorityType:

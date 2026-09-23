@@ -206,7 +206,7 @@ All 119 tools, grouped by area. Tools that write to the project accept an option
 
 ### Event & NPC ergonomics
 
-- `create_npc` — one-shot "talking NPC": graphic + trigger + a talk list from `text` or explicit `commands`
+- `create_npc` — one-shot "talking NPC": graphic + trigger + a talk list from `text` (optionally auto word-wrapped with `wrap`) or explicit `commands`
 - `create_chest` — one-shot treasure chest: the two-page self-switch idiom (give item/weapon/armor/gold, then never again)
 - `create_transfer` — one-shot map transfer, in either working idiom: face a solid landmark (`action_button`) or step on a doormat (`player_touch`)
 - `set_event_page` — merge a page's graphic + behavior (sprite, trigger, priority, movement, flags) in place
@@ -314,6 +314,8 @@ Drop a **`.rpgmaker-mcp.json`** in the project root to replace the estimate with
 - **`nameBudgetChars`** — how wide to assume `\N[3]` / `\P[1]` renders. A name is typed by the player at runtime, so budget the Name Input `maxLength` (usually 8) rather than the default name, or a long name overflows a line that fitted while you were testing. Defaults to `0`, which ignores name escapes as before.
 
 Everything fails soft: no file, bad JSON, or a malformed `text` section leaves the built-in estimate in place, so a broken config is never worse than no config. The file is re-read when its mtime changes, and warnings then report real widths (`Show Text line is 650px but the message window fits 616px with a face shown`).
+
+**Auto-wrap.** Rather than fixing overflowing lines by hand, pass `wrap: true` to `build_show_text` or `create_npc` and write whole paragraphs: the text is word-wrapped to exactly the width the warning checks (the default estimate or your `.rpgmaker-mcp.json` metrics; escape codes like `\C[n]` never count or get split) and split into as many 4-line message boxes as needed, each with the same face/speaker. `wrap: true` (or `"soft"`) reflows every entry as one paragraph; `"hard"` keeps each entry and `\n` as a forced line break and only wraps lines that are too long.
 
 ## Reference linting
 

@@ -12,7 +12,9 @@ import {
   measureLine,
   parseTextMetrics,
   setActiveTextMetrics,
+  wrapLines,
 } from '../src/validation/textMetrics.js';
+import { showText } from '../src/events/commandBuilders.js';
 import { textLineWidthWarnings } from '../src/validation/eventCommands.js';
 import {
   clearProjectConfigCache,
@@ -248,5 +250,85 @@ describe('loadProjectTextMetrics', () => {
 
   it('returns null for an empty project path', async () => {
     expect(await loadProjectTextMetrics('')).toBeNull();
+  });
+});
+
+describe('wrapLines / showText wrap', () => {
+  const PARAGRAPH =
+    'You made it back from the ruins, and not a moment too soon. The \\C[2]northern pass\\C[0] ' +
+    'collapsed an hour after you left, and the village has been cut off ever since. \\N[1] ' +
+    'says the old tunnels under the chapel might still lead through, but nobody has gone ' +
+    'down there in many years. Will you go and look?';
+
+  afterEach(() => setActiveTextMetrics(null));
+
+  it('acceptance: a ~300-char paragraph with a face → 4-line boxes, no line too wide, no warnings', () => {
+    expect(PARAGRAPH.length).toBeGreaterThanOrEqual(300);
+    const cmds = showText([PARAGRAPH], { faceName: 'Actor1', speakerName: 'Elder', wrap: true });
+
+    const boxes: string[][] = [];
+    for (const c of cmds) {
+      if (c.code === 101) {
+        expect(c.parameters).toEqual(['Actor1', 0, 0, 2, 'Elder']);
+        boxes.push([]);
+      } else {
+        expect(c.code).toBe(401);
+        boxes[boxes.length - 1]!.push(c.parameters[0] as string);
+      }
+    }
+    expect(boxes.length).toBeGreaterThan(1);
+    for (const box of boxes) {
+      expect(box.length).toBeGreaterThan(0);
+      expect(box.length).toBeLessThanOrEqual(4);
+      for (const line of box) {
+        expect(measureLine(line, DEFAULT_TEXT_METRICS)).toBeLessThanOrEqual(38);
+      }
+    }
+    // Nothing lost or reordered, escapes intact.
+    expect(boxes.flat().join(' ')).toBe(PARAGRAPH);
+    expect(textLineWidthWarnings(cmds, 'p', DEFAULT_TEXT_METRICS)).toEqual([]);
+  });
+
+  it('escape codes do not count toward the width', () => {
+    // 38 visible chars exactly, padded with colour codes: fits on one face line.
+    const line = '\\C[2]' + 'abcd '.repeat(7) + 'abc\\C[0]';
+    expect(wrapLines([line], true, 'soft', DEFAULT_TEXT_METRICS)).toEqual([line]);
+  });
+
+  it('uses the full no-face width when no face is shown', () => {
+    const words = Array.from({ length: 30 }, () => 'word').join(' ');
+    const out = wrapLines([words], false, 'soft', DEFAULT_TEXT_METRICS);
+    for (const l of out) expect(l.length).toBeLessThanOrEqual(55);
+    expect(out[0]!.length).toBeGreaterThan(38);
+  });
+
+  it('soft mode reflows separate entries; hard mode keeps them as breaks', () => {
+    expect(wrapLines(['Hello', 'there.'], false, 'soft', DEFAULT_TEXT_METRICS)).toEqual([
+      'Hello there.',
+    ]);
+    expect(wrapLines(['Hello', 'there.\nBye.'], false, 'hard', DEFAULT_TEXT_METRICS)).toEqual([
+      'Hello',
+      'there.',
+      'Bye.',
+    ]);
+  });
+
+  it('breaks a word wider than the window between atoms, never inside an escape', () => {
+    const m: TextMetrics = { ...DEFAULT_TEXT_METRICS, budget: { noFace: 5, withFace: 5 } };
+    expect(wrapLines(['abc\\C[2]defgh'], false, 'soft', m)).toEqual(['abc\\C[2]de', 'fgh']);
+  });
+
+  it('wraps by pixel width with project metrics, matching the validator exactly', () => {
+    setActiveTextMetrics(FONT);
+    const cmds = showText([PARAGRAPH], { faceName: 'Actor1', wrap: true });
+    expect(textLineWidthWarnings(cmds, 'p')).toEqual([]);
+    for (const c of cmds.filter((c) => c.code === 401)) {
+      expect(measureLine(c.parameters[0] as string, FONT)).toBeLessThanOrEqual(616);
+    }
+  });
+
+  it('leaves text verbatim when wrap is off', () => {
+    const long = 'x '.repeat(40).trim();
+    expect(showText([long]).map((c) => c.code)).toEqual([101, 401]);
   });
 });

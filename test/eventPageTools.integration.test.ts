@@ -179,6 +179,32 @@ describe('create_npc (integration)', () => {
     expect(page.list[0].parameters[4]).toBe('Villager'); // speaker name
   });
 
+  it('word-wraps a paragraph into face-width 4-line boxes with `wrap: true`', async () => {
+    const paragraph =
+      'The old mill has stood by the river for as long as anyone remembers, but lately the wheel turns at night with nobody inside, and the miller swears he hears singing under the floorboards. Would you look into it?';
+    const result = (await get('create_npc').handler(
+      { projectPath: dir },
+      {
+        mapId: 1,
+        x: 3,
+        y: 3,
+        name: 'Miller',
+        characterName: 'People1',
+        faceName: 'People1',
+        text: [paragraph],
+        wrap: true,
+      },
+    )) as { event: { id: number }; warnings?: unknown[] };
+
+    expect(result.warnings).toBeUndefined();
+    const map = JSON.parse(await readFile(join(dir, 'data', 'Map001.json'), 'utf-8')) as MapData;
+    const list = map.events[result.event.id]!.pages[0].list;
+    expect(list.filter((c) => c.code === 101).length).toBeGreaterThan(1);
+    const lines = list.filter((c) => c.code === 401).map((c) => c.parameters[0] as string);
+    expect(lines.join(' ')).toBe(paragraph);
+    for (const line of lines) expect(line.length).toBeLessThanOrEqual(38);
+  });
+
   it('prefers an explicit commands list over text and terminates it', async () => {
     const event = await createNpc(dir, 1, 1, 1, 'Signpost', {
       commands: [{ code: 108, indent: 0, parameters: ['A note'] }],

@@ -183,3 +183,90 @@ export function setActiveTextMetrics(metrics: TextMetrics | null): void {
 export function getActiveTextMetrics(): TextMetrics {
   return activeMetrics;
 }
+
+/** Lines a single Show Text (101) box holds — the editor's dialog allows four. */
+export const MESSAGE_BOX_LINES = 4;
+
+/**
+ * How {@link wrapLines} treats the caller's line breaks:
+ * - `'soft'` — every array entry and `\n` is just whitespace; the whole text is
+ *   reflowed as one paragraph.
+ * - `'hard'` — every array entry and `\n` is kept as a forced line break, and only
+ *   lines too wide for the window are wrapped.
+ */
+export type WrapMode = 'soft' | 'hard';
+
+/**
+ * One indivisible unit of a word: an escape code (`\C[2]`, `\N[1]`, `\.`) or a single
+ * character. Splitting inside an escape would leave a half-code the engine prints
+ * literally, so an over-long word is only ever broken between atoms.
+ */
+const ATOM = /\\[A-Z]+\[[^\]]*\]|\\[\s\S]|[\s\S]/giu;
+
+/**
+ * Break a word too wide for the budget on its own into budget-sized pieces, at atom
+ * boundaries. A single atom wider than the whole budget is emitted alone — nothing
+ * narrower exists to fall back to.
+ */
+function splitLongWord(word: string, limit: number, metrics: TextMetrics): string[] {
+  const pieces: string[] = [];
+  let current = '';
+  for (const atom of word.match(ATOM) ?? []) {
+    const candidate = current + atom;
+    if (current !== '' && measureLine(candidate, metrics) > limit) {
+      pieces.push(current);
+      current = atom;
+    } else {
+      current = candidate;
+    }
+  }
+  if (current !== '') pieces.push(current);
+  return pieces;
+}
+
+/** Greedy word-wrap of one paragraph to `limit`, measured exactly as the validator does. */
+function wrapParagraph(paragraph: string, limit: number, metrics: TextMetrics): string[] {
+  const words = paragraph.split(/\s+/).filter((w) => w !== '');
+  if (words.length === 0) return [''];
+  const out: string[] = [];
+  let current = '';
+  for (const word of words) {
+    const candidate = current === '' ? word : `${current} ${word}`;
+    if (measureLine(candidate, metrics) <= limit) {
+      current = candidate;
+      continue;
+    }
+    if (current !== '') out.push(current);
+    if (measureLine(word, metrics) <= limit) {
+      current = word;
+    } else {
+      const pieces = splitLongWord(word, limit, metrics);
+      out.push(...pieces.slice(0, -1));
+      current = pieces[pieces.length - 1] ?? '';
+    }
+  }
+  if (current !== '') out.push(current);
+  return out;
+}
+
+/**
+ * Word-wrap Show Text lines to the message window, using the very same measurement
+ * ({@link measureLine}) and budget ({@link lineBudget}) as the line-width check — so
+ * wrapped output can never trip that warning (bar a single glyph or escape wider
+ * than the whole window). Escape codes draw nothing and are never split; name
+ * escapes are billed at the project's `nameBudgetChars`.
+ */
+export function wrapLines(
+  lines: string[],
+  faceShown: boolean,
+  mode: WrapMode = 'soft',
+  metrics: TextMetrics = getActiveTextMetrics(),
+): string[] {
+  if (lines.length === 0) return [];
+  const limit = lineBudget(metrics, faceShown);
+  const paragraphs =
+    mode === 'soft'
+      ? [lines.map(String).join(' ')]
+      : lines.flatMap((line) => String(line).split('\n'));
+  return paragraphs.flatMap((p) => wrapParagraph(p, limit, metrics));
+}

@@ -1,4 +1,11 @@
 import { EventCommand } from '../utils/types.js';
+import {
+  MESSAGE_BOX_LINES,
+  TextMetrics,
+  WrapMode,
+  getActiveTextMetrics,
+  wrapLines,
+} from '../validation/textMetrics.js';
 
 /**
  * Splice built commands into a command list before its code-0 end marker (or at
@@ -131,24 +138,52 @@ export interface ShowTextOptions {
   speakerName?: string;
   /** Indentation level in the target list. Default 0. */
   indent?: number;
+  /**
+   * Auto word-wrap to the message window and split into 4-line boxes (one 101 setup
+   * per box). `true` = `'soft'` (reflow everything as one paragraph); `'hard'` keeps
+   * each entry / `\n` as a forced break. Default off: one 401 per entry, verbatim.
+   */
+  wrap?: boolean | WrapMode;
+  /** Metrics to wrap with. Default: the active project's (same as the width check). */
+  metrics?: TextMetrics;
 }
 
 /**
  * Show Text (command 101 setup + one 401 line per text line). `lines` are the
- * message lines; the engine word-wraps within a window, so pass one entry per
- * visual line you intend. Face/background/position/speaker match the editor's
- * Show Text dialog.
+ * message lines; MZ does not word-wrap, so by default pass one entry per visual
+ * line you intend. With `wrap`, the lines are word-wrapped to the width the
+ * line-width check uses and split into as many 4-line boxes as needed, each with
+ * its own identical 101 setup. Face/background/position/speaker match the
+ * editor's Show Text dialog.
  */
 export function showText(lines: string[], options: ShowTextOptions = {}): EventCommand[] {
   const indent = options.indent ?? 0;
-  const setup = cmd(CODE.SHOW_TEXT, indent, [
-    options.faceName ?? '',
-    options.faceIndex ?? 0,
-    BACKGROUND_CODE[options.background ?? 'window'],
-    POSITION_CODE[options.position ?? 'bottom'],
-    options.speakerName ?? '',
-  ]);
-  return [setup, ...lines.map((line) => cmd(CODE.SHOW_TEXT_LINE, indent, [String(line)]))];
+  const faceName = options.faceName ?? '';
+  const setup = (): EventCommand =>
+    cmd(CODE.SHOW_TEXT, indent, [
+      faceName,
+      options.faceIndex ?? 0,
+      BACKGROUND_CODE[options.background ?? 'window'],
+      POSITION_CODE[options.position ?? 'bottom'],
+      options.speakerName ?? '',
+    ]);
+  const toLine = (line: string): EventCommand => cmd(CODE.SHOW_TEXT_LINE, indent, [String(line)]);
+
+  if (!options.wrap) return [setup(), ...lines.map(toLine)];
+
+  const mode: WrapMode = options.wrap === 'hard' ? 'hard' : 'soft';
+  const wrapped = wrapLines(
+    lines,
+    faceName !== '',
+    mode,
+    options.metrics ?? getActiveTextMetrics(),
+  );
+  if (wrapped.length === 0) return [setup()];
+  const out: EventCommand[] = [];
+  for (let i = 0; i < wrapped.length; i += MESSAGE_BOX_LINES) {
+    out.push(setup(), ...wrapped.slice(i, i + MESSAGE_BOX_LINES).map(toLine));
+  }
+  return out;
 }
 
 /** Choice list window position (left/middle/right). */
