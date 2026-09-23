@@ -5,13 +5,13 @@
 # RPG Maker MZ MCP Server
 
 [![CI](https://github.com/Redseb/rpgmaker-mz-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Redseb/rpgmaker-mz-mcp/actions/workflows/ci.yml)
-[![Tools](https://img.shields.io/badge/tools-119-e94560.svg)](#available-tools)
+[![Tools](https://img.shields.io/badge/tools-120-e94560.svg)](#available-tools)
 [![MCP](https://img.shields.io/badge/MCP-stdio-e94560.svg)](https://modelcontextprotocol.io/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178c6.svg)](tsconfig.json)
 [![Node.js >=20](https://img.shields.io/badge/node-%3E%3D20-3fa796.svg)](package.json)
 [![License: MIT](https://img.shields.io/badge/License-MIT-3fa796.svg)](#license)
 
-**119 tools** that let an AI assistant read and write an RPG Maker MZ project directly — actors, classes, skills, items, equipment, states, enemies, troops, common events, maps, tiles, tilesets, events, and system settings — instead of hand-editing everything in the editor.
+**120 tools** that let an AI assistant read and write an RPG Maker MZ project directly — actors, classes, skills, items, equipment, states, enemies, troops, common events, maps, tiles, tilesets, events, and system settings — instead of hand-editing everything in the editor.
 
 _"Add a town under the world map, paint it with grass, and drop in a shopkeeper who sells potions"_ → done, in-project, no editor clicks.
 
@@ -144,7 +144,7 @@ The easiest path is the `.mcpb` bundle from [Releases](https://github.com/Redseb
 
 ## Available tools
 
-All 119 tools, grouped by area. Tools that write to the project accept an optional `dryRun` argument (see [Dry-run preview](#dry-run-preview)); those that can refuse a structurally invalid write also accept `force` (see [Event validation](#event-validation-throw-by-default)).
+All 120 tools, grouped by area. Tools that write to the project accept an optional `dryRun` argument (see [Dry-run preview](#dry-run-preview)); those that can refuse a structurally invalid write also accept `force` (see [Event validation](#event-validation-throw-by-default)).
 
 <details>
 <summary><strong>Expand the full tool reference</strong></summary>
@@ -248,6 +248,10 @@ Read-only builders that return editor-faithful `EventCommand` sequences; land th
 ### Assets
 
 - `list_assets` — enumerate available asset basenames (characters, faces, tilesets, pictures, audio, …)
+
+### Web export
+
+- `export_web` — build a **pruned HTML5 deployment** for itch.io or any static host: `index.html`, `js/`, `css/`, `fonts/`, `icon/`, `effects/` and `data/*.json`, plus only the `img/`/`audio/`/`movies/` files something references (every string in the data files, string literals in the core engine scripts and plugins, plugin `@default`s; `img/system/` is always kept, and every `.ogg`/`.m4a` variant of a kept track). Writes the folder to `outDir` and, with `zip` (default), `<outDir>.zip` with `index.html` at the archive root. Returns file/byte counts, kept/dropped asset counts and paths, the screen size from `System.advanced` (use it as the itch embed size), and warnings past itch's 1000-file / 200 MB-per-file limits. `prune: false` copies every asset — use it if a plugin builds asset names at runtime. Writes nothing inside the project; `outDir` can't be the project or sit inside a folder it copies, and an existing non-empty `outDir` is only replaced if it's a previous `export_web` output.
 
 ### System & vocabulary
 
