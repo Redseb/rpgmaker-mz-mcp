@@ -29,8 +29,35 @@ export interface PlaytestResult {
 }
 
 interface TextLog {
+  /** Lines shown on the map (event dialogue). */
   lines: string[];
+  /** Lines shown during a battle (troop battle events, victory/defeat messages). */
+  battleLines?: string[];
   choices: string[] | null;
+}
+
+/** Default `autoBattle.maxMs` — kept under the MCP SDK's 60 s request timeout. */
+export const AUTO_BATTLE_MAX_MS = 60000;
+
+/** How often a long step sends a progress heartbeat (when the client asked for progress). */
+const HEARTBEAT_MS = 5000;
+
+/** Longest `walk`/`startEvent` waits for an event it set off to reach a resting point. */
+const SETTLE_MS = 5000;
+
+interface Flow {
+  scene: string | null;
+  changing: boolean;
+  transferring: boolean;
+  mapReady: boolean;
+  message: boolean;
+  eventRunning: boolean;
+}
+
+interface Tile {
+  mapId: number;
+  x: number;
+  y: number;
 }
 
 type StepFn<S extends PlaytestStep> = (
@@ -98,7 +125,12 @@ async function advanceText(s: EngineSession, maxMs: number): Promise<Record<stri
     await s.page.waitForTimeout(90);
   }
   const text = await s.call<TextLog>('takeText');
-  return { stoppedAt, lines: text.lines, ...(text.choices ? { choices: text.choices } : {}) };
+  return {
+    stoppedAt,
+    lines: text.lines,
+    ...(text.battleLines ? { battleLines: text.battleLines } : {}),
+    ...(text.choices ? { choices: text.choices } : {}),
+  };
 }
 
 async function choose(s: EngineSession, index: number): Promise<Record<string, unknown>> {
@@ -119,10 +151,71 @@ interface Pos {
   moving: boolean;
 }
 
+/** Tile offset of one step in each direction (engine y grows downward). */
+const STEP_DELTA = {
+  up: { dx: 0, dy: -1 },
+  down: { dx: 0, dy: 1 },
+  left: { dx: -1, dy: 0 },
+  right: { dx: 1, dy: 0 },
+} as const;
+
+/**
+ * After something may have set off an event (a touch trigger, `startEvent`),
+ * let it run to a resting point: wait through a player transfer — the fade, the
+ * scene change and the new map loading — and through event commands that show
+ * nothing (waits, move routes, the frames before a Transfer Player runs). Stops
+ * as soon as there is something for the script to handle (a message, a choice,
+ * a battle) or nothing is running, and gives up quietly after `SETTLE_MS` (a
+ * long silent cutscene is reported as `eventRunning`, not as an error).
+ */
+async function settle(s: EngineSession): Promise<void> {
+  const t0 = Date.now();
+  let idleSince: number | undefined;
+  while (Date.now() - t0 < SETTLE_MS) {
+    const f = await s.call<Flow>('flow');
+    if (f.scene === 'Scene_Battle' || f.scene === 'Scene_Gameover' || f.message) return;
+    const moving = f.changing || f.transferring || (f.scene === 'Scene_Map' && !f.mapReady);
+    if (moving || f.eventRunning) {
+      idleSince = undefined;
+    } else {
+      // Idle — confirm over a short beat, since an event can be between commands.
+      idleSince ??= Date.now();
+      if (Date.now() - idleSince >= 200) return;
+    }
+    await s.page.waitForTimeout(50);
+  }
+}
+
+/** Where the player was transferred to since the last `clearTransfer`, if anywhere. */
+async function takeTransfer(s: EngineSession): Promise<{ transferredTo?: Tile }> {
+  const t = await s.call<Tile | null>('takeTransfer');
+  return t ? { transferredTo: t } : {};
+}
+
+/** Whether an event/message is still going after settling — the script's cue to advanceText. */
+async function runningFlags(s: EngineSession): Promise<Record<string, unknown>> {
+  const f = await s.call<Flow>('flow');
+  return {
+    ...(f.message ? { messageOpen: true } : {}),
+    ...(f.message || f.eventRunning || f.scene === 'Scene_Battle' ? { eventRunning: true } : {}),
+    ...(f.scene !== 'Scene_Map' ? { scene: f.scene } : {}),
+  };
+}
+
+async function startEvent(s: EngineSession, eventId: number): Promise<Record<string, unknown>> {
+  await assertIdle(s, `start event ${eventId}`);
+  const event = await s.call('startEvent', eventId);
+  await settle(s);
+  return { event, ...(await takeTransfer(s)), ...(await runningFlags(s)) };
+}
+
 /**
  * Walk tile by tile: hold the direction until the player leaves the tile (or a
  * timeout says it's blocked), then release and let the move finish. Reports
- * where it stopped and how many steps were blocked — the invisible-wall check.
+ * where it stopped and, when a tile refused entry, both the player's tile
+ * (`stoppedAt`) and the refused one (`blockedTile`) — the invisible-wall check.
+ * When a step sets off an event (a door, a touch trigger) the walk stops, waits
+ * for any transfer to finish, and reports the arrival as `transferredTo`.
  */
 async function walk(
   s: EngineSession,
@@ -130,8 +223,9 @@ async function walk(
   steps: number,
 ): Promise<Record<string, unknown>> {
   const start = await s.call<Pos>('playerPos');
+  await s.call('clearTransfer');
   let walked = 0;
-  let blockedAt: { x: number; y: number } | undefined;
+  let blocked: { stoppedAt: Tile; blockedTile: Tile } | undefined;
   for (let i = 0; i < steps; i++) {
     const before = await s.call<Pos>('playerPos');
     await s.page.evaluate(`Input._currentState[${JSON.stringify(dir)}] = true`);
@@ -147,10 +241,20 @@ async function walk(
     }
     await s.page.evaluate(`Input._currentState[${JSON.stringify(dir)}] = false`);
     if (!moved) {
-      blockedAt = { x: before.x, y: before.y };
+      // Bumping into a same-as-characters touch event starts it without moving
+      // the player: that's a trigger, not a wall.
+      if (await s.call<boolean>('busy')) {
+        await settle(s);
+        break;
+      }
+      const { dx, dy } = STEP_DELTA[dir];
+      blocked = {
+        stoppedAt: { mapId: before.mapId, x: before.x, y: before.y },
+        blockedTile: { mapId: before.mapId, x: before.x + dx, y: before.y + dy },
+      };
       break;
     }
-    // Let the step (and any touch-triggered transfer/event) settle.
+    // Let the step finish.
     const t1 = Date.now();
     while (Date.now() - t1 < 2000) {
       const p = await s.call<Pos>('playerPos');
@@ -158,7 +262,11 @@ async function walk(
       await s.page.waitForTimeout(30);
     }
     walked++;
-    if (await s.call<boolean>('busy')) break; // an event fired — stop and let the script handle it
+    if (await s.call<boolean>('busy')) {
+      // An event fired — let any transfer land, then stop and let the script handle it.
+      await settle(s);
+      break;
+    }
   }
   const end = await s.call<Pos>('playerPos');
   return {
@@ -166,8 +274,9 @@ async function walk(
     walked,
     from: { mapId: start.mapId, x: start.x, y: start.y },
     to: { mapId: end.mapId, x: end.x, y: end.y },
-    ...(blockedAt ? { blockedAt } : {}),
-    ...((await s.call<boolean>('busy')) ? { eventRunning: true } : {}),
+    ...(blocked ?? {}),
+    ...(await takeTransfer(s)),
+    ...(await runningFlags(s)),
   };
 }
 
@@ -181,10 +290,11 @@ async function autoBattle(
   }
   await s.waitFor('a battle to start', 'sceneIs', ['Scene_Battle'], 15000);
   await s.call('setAutoBattle');
+  const maxMs = step.maxMs ?? AUTO_BATTLE_MAX_MS;
   const t0 = Date.now();
   let last: unknown;
   let ended = false;
-  while (Date.now() - t0 < (step.maxMs ?? 120000)) {
+  while (Date.now() - t0 < maxMs) {
     if ((await s.call<string>('sceneName')) !== 'Scene_Battle') {
       ended = true;
       break;
@@ -193,14 +303,19 @@ async function autoBattle(
     await s.press('ok');
     await s.page.waitForTimeout(200);
   }
-  if (!ended) throw new Error(`Battle still running after ${step.maxMs ?? 120000}ms.`);
+  if (!ended) throw new Error(`Battle still running after ${maxMs}ms.`);
   // Let the victory/defeat transition settle before reading the result.
   await s.page.waitForTimeout(300);
+  // The battle's own messages (troop battle events, victory/defeat text), taken
+  // here so a later advanceText reports only what the map says afterwards.
+  const text = await s.call<TextLog>('takeText');
+  const battleLines = [...(text.battleLines ?? []), ...text.lines];
   return {
     outcome: await s.call('battleOutcome'),
     final: await s.call('battleSnapshot'),
     turnsSeen: (last as { turn?: number } | undefined)?.turn ?? 0,
     scene: await s.call('sceneName'),
+    ...(battleLines.length ? { lines: battleLines } : {}),
   };
 }
 
@@ -213,8 +328,7 @@ async function runStep(
     case 'load':
       return doLoad(s, step, ctx);
     case 'startEvent':
-      await assertIdle(s, `start event ${step.eventId}`);
-      return { event: await s.call('startEvent', step.eventId) };
+      return startEvent(s, step.eventId);
     case 'advanceText':
       return advanceText(s, step.maxMs ?? 15000);
     case 'choose':
@@ -243,10 +357,47 @@ async function runStep(
   }
 }
 
+/**
+ * Progress reporting for a run: `phase` announces a new unit of work (whole
+ * numbers), and a heartbeat every `HEARTBEAT_MS` while it runs (booting, a
+ * minute-long battle) keeps a client that resets its timeout on progress from
+ * giving up. Progress must strictly increase, so heartbeats creep towards the
+ * next whole number without reaching it. A no-op without a sink.
+ */
+export function progressTicker(
+  report: ((progress: number, total: number, message: string) => void) | undefined,
+  total: number,
+): { phase: (n: number, label: string) => void; stop: () => void } {
+  if (!report) return { phase: () => undefined, stop: () => undefined };
+  let base = 0;
+  let label = '';
+  let beats = 0;
+  let since = Date.now();
+  const timer = setInterval(() => {
+    beats++;
+    const secs = Math.round((Date.now() - since) / 1000);
+    report(base + beats / (beats + 1), total, `${label} (${secs}s)`);
+  }, HEARTBEAT_MS);
+  return {
+    phase: (n, l) => {
+      base = n;
+      label = l;
+      beats = 0;
+      since = Date.now();
+      report(n, total, l);
+    },
+    stop: () => clearInterval(timer),
+  };
+}
+
 export async function runPlaytest(
   projectPath: string,
   steps: PlaytestStep[],
-  opts: { out?: string } = {},
+  opts: {
+    out?: string;
+    /** Progress sink (MCP progress notifications): called per step and as a heartbeat during long ones. */
+    onProgress?: (progress: number, total: number, message: string) => void;
+  } = {},
 ): Promise<PlaytestResult> {
   const preflight = checkSteps(steps);
   if (preflight.length) throw new Error(`Invalid playtest script: ${preflight.join(' ')}`);
@@ -257,35 +408,44 @@ export async function runPlaytest(
   const screenshots: string[] = [];
   const results: StepResult[] = [];
 
-  const session = await openSession(projectPath);
+  // Booting the game counts as one unit of progress, then one per step.
+  const progress = progressTicker(opts.onProgress, steps.length + 1);
   try {
-    for (let index = 0; index < steps.length; index++) {
-      const step = steps[index];
-      try {
-        const detail = await runStep(session, step, { index, outDir, runId, screenshots });
-        results.push({ index, action: step.action, ok: true, ...detail });
-      } catch (e) {
-        const error = e instanceof Error ? e.message.split('\n')[0] : String(e);
-        results.push({ index, action: step.action, ok: false, error });
-        return {
-          ok: false,
-          failedStep: index,
-          error,
-          steps: results,
-          screenshots,
-          finalState: await session.call('state').catch(() => undefined),
-          problems: [...session.problems],
-        };
+    progress.phase(0, 'Booting the game');
+    const session = await openSession(projectPath);
+    try {
+      for (let index = 0; index < steps.length; index++) {
+        const step = steps[index];
+        progress.phase(index + 1, `Step ${index + 1}/${steps.length}: ${step.action}`);
+        try {
+          const detail = await runStep(session, step, { index, outDir, runId, screenshots });
+          results.push({ index, action: step.action, ok: true, ...detail });
+        } catch (e) {
+          const error = e instanceof Error ? e.message.split('\n')[0] : String(e);
+          results.push({ index, action: step.action, ok: false, error });
+          return {
+            ok: false,
+            failedStep: index,
+            error,
+            steps: results,
+            screenshots,
+            finalState: await session.call('state').catch(() => undefined),
+            problems: [...session.problems],
+          };
+        }
       }
+      progress.phase(steps.length + 1, 'Done');
+      return {
+        ok: true,
+        steps: results,
+        screenshots,
+        finalState: await session.call('state'),
+        problems: [...session.problems],
+      };
+    } finally {
+      await session.close();
     }
-    return {
-      ok: true,
-      steps: results,
-      screenshots,
-      finalState: await session.call('state'),
-      problems: [...session.problems],
-    };
   } finally {
-    await session.close();
+    progress.stop();
   }
 }

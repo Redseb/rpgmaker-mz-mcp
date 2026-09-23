@@ -81,15 +81,16 @@ export const playtestToolDefinitions: ToolDefinition[] = [
     description:
       'Play the game headless from a script of steps and report what happened — the runtime check validators cannot do (does the door transfer, does the NPC say the right thing, does the choice branch, is there an invisible wall). One browser session runs the whole script; each step reports its outcome and the run stops at the first failing step. Steps: ' +
       '`load` {mapId,x,y,direction?,party?,level?,gold?,switches?,variables?,selfSwitches?,items?,equip?,encounters?} starts a fresh game there (random encounters off unless encounters:true); ' +
-      '`startEvent` {eventId} starts a map event as if triggered; ' +
-      '`advanceText` {maxMs?} presses OK until the event is idle, STOPPING at an open choice list/battle — returns the message lines shown and any open choices; ' +
+      '`startEvent` {eventId} starts a map event as if triggered and lets it run until it shows text or goes idle (waiting out any transfer — reported as `transferredTo`); ' +
+      '`advanceText` {maxMs?} presses OK until the event is idle, STOPPING at an open choice list/battle — returns the map message `lines` shown and any open choices (text shown during a battle comes back separately as `battleLines`); ' +
       '`choose` {index} picks a 0-based choice; ' +
-      '`walk` {direction, steps?} walks tile by tile, reporting where it ended and `blockedAt` if a tile refused entry (stops early when a touch event fires); ' +
+      "`walk` {direction, steps?} walks tile by tile, reporting where it ended (`to`); if a tile refused entry, `stoppedAt` (the player's tile) and `blockedTile` (the refused one); when a step fires a touch event (a door) it stops, waits out the transfer and reports `transferredTo` {mapId,x,y}, plus `eventRunning`/`messageOpen` if the event is still going; " +
       '`press` {button, times?}; `wait` {ms}; ' +
-      '`autoBattle` {troopId?, canEscape?, canLose?, maxMs?} fights (a started or new battle) on auto AI until it ends; ' +
+      "`autoBattle` {troopId?, canEscape?, canLose?, maxMs? (default 60000)} fights (a started or new battle) on auto AI until it ends, returning the battle's message `lines` (troop events, victory text); " +
       '`screenshot` {name?} saves a PNG; ' +
       '`eval` {script} evaluates a JS expression in the game page and returns its value (e.g. "$gameSwitches.value(3)"). ' +
       `Every step result carries ok; the response ends with finalState (scene, map, position, gold, party) and problems (console/page errors, HTTP 404s). Max ${MAX_STEPS} steps. Read-only: never writes the project. ` +
+      'A run can take MINUTES (booting ~5-10 s, a battle up to a minute): clients should raise their request timeout, or send a progressToken with resetTimeoutOnProgress — the tool then sends a progress notification per step and every 5 s during long ones. Split long scripts into several runs if your client can do neither. ' +
       REQUIREMENTS,
     inputSchema: {
       steps: playtestSteps.describe('The script, run in order.'),
@@ -99,7 +100,8 @@ export const playtestToolDefinitions: ToolDefinition[] = [
         .describe('Directory for screenshot PNGs. Default: <os tmpdir>/rpgmaker-mz-mcp/renders.'),
       inline: inlineArg,
     },
-    handler: (ctx, args) => runPlaytest(ctx.projectPath, args.steps, { out: args.out }),
+    handler: (ctx, args) =>
+      runPlaytest(ctx.projectPath, args.steps, { out: args.out, onProgress: ctx.reportProgress }),
     images: (result, args) => (args.inline ? (result as PlaytestResult).screenshots : []),
   },
 ];

@@ -1,4 +1,4 @@
-import { describe, expect, it, afterAll, beforeAll } from 'vitest';
+import { describe, expect, it, afterAll, beforeAll, vi } from 'vitest';
 import { mkdtemp, mkdir, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
@@ -11,6 +11,7 @@ import { planRender, MAX_RENDER_EDGE_PX } from '../src/playtest/render.js';
 import { checkSteps, playtestSteps } from '../src/playtest/steps.js';
 import { driverCall } from '../src/playtest/session.js';
 import { safeName } from '../src/playtest/output.js';
+import { progressTicker } from '../src/playtest/playtest.js';
 import { playtestToolDefinitions } from '../src/tools/playtestTools.js';
 
 describe('resolveRequestPath', () => {
@@ -144,5 +145,34 @@ describe('driver helpers', () => {
     ]);
     expect(render.mutates).toBeFalsy();
     expect(play.mutates).toBeFalsy();
+  });
+});
+
+describe('progressTicker', () => {
+  it('reports each phase and strictly increasing heartbeats below the next phase', () => {
+    vi.useFakeTimers();
+    try {
+      const seen: Array<[number, number, string]> = [];
+      const t = progressTicker((p, total, msg) => seen.push([p, total, msg]), 3);
+      t.phase(0, 'Booting the game');
+      t.phase(1, 'Step 1/2: autoBattle');
+      vi.advanceTimersByTime(15000);
+      t.phase(2, 'Step 2/2: eval');
+      t.stop();
+      vi.advanceTimersByTime(15000);
+      expect(seen.map(([p]) => p)).toEqual([0, 1, 1.5, 1 + 2 / 3, 1.75, 2]);
+      expect(seen.every(([, total]) => total === 3)).toBe(true);
+      expect(seen[2][2]).toBe('Step 1/2: autoBattle (5s)');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('is a no-op without a sink', () => {
+    const t = progressTicker(undefined, 2);
+    expect(() => {
+      t.phase(1, 'x');
+      t.stop();
+    }).not.toThrow();
   });
 });

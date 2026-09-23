@@ -2,7 +2,12 @@
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js';
+import type {
+  CallToolResult,
+  ServerNotification,
+  ServerRequest,
+} from '@modelcontextprotocol/sdk/types.js';
 
 import { basename } from 'path';
 import { readFileSync } from 'fs';
@@ -84,6 +89,35 @@ async function runTool(
   };
 }
 
+/**
+ * Build a `reportProgress` hook for one tool call, or undefined when the client
+ * didn't ask for progress (no `progressToken`). Notifications are fire-and-forget
+ * — a lost one must never fail the tool — and a `progress` that doesn't increase
+ * is dropped, since the spec requires it to grow with every notification.
+ */
+function progressReporter(
+  extra: RequestHandlerExtra<ServerRequest, ServerNotification> | undefined,
+): ToolContext['reportProgress'] {
+  const progressToken = extra?._meta?.progressToken;
+  if (progressToken === undefined) return undefined;
+  let last = -Infinity;
+  return (progress, total, message) => {
+    if (!(progress > last)) return;
+    last = progress;
+    extra!
+      .sendNotification({
+        method: 'notifications/progress',
+        params: {
+          progressToken,
+          progress,
+          ...(total !== undefined ? { total } : {}),
+          ...(message ? { message } : {}),
+        },
+      })
+      .catch(() => undefined);
+  };
+}
+
 function buildServer(initialProjectPath: string): McpServer {
   const server = new McpServer({ name: 'rpgmaker-mz-server', version: serverVersion() });
 
@@ -101,7 +135,10 @@ function buildServer(initialProjectPath: string): McpServer {
     server.registerTool(
       def.name,
       { description: def.description, inputSchema: schemaFor(def) },
-      async (args: Record<string, unknown>): Promise<CallToolResult> => {
+      async (
+        args: Record<string, unknown>,
+        extra?: RequestHandlerExtra<ServerRequest, ServerNotification>,
+      ): Promise<CallToolResult> => {
         try {
           if (def.requiresProject !== false) {
             if (!projectPath) {
@@ -120,7 +157,8 @@ function buildServer(initialProjectPath: string): McpServer {
             setActiveTextMetrics(await loadProjectTextMetrics(projectPath));
           }
 
-          const result = await runTool(def, { projectPath, setProjectPath }, args);
+          const reportProgress = progressReporter(extra);
+          const result = await runTool(def, { projectPath, setProjectPath, reportProgress }, args);
           const content: CallToolResult['content'] = [
             { type: 'text', text: JSON.stringify(result, null, 2) },
           ];

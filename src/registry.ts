@@ -12,6 +12,13 @@ export interface ToolContext {
    * session. Provided by the server entry point; only `set_project` calls it.
    */
   setProjectPath?: (path: string) => void;
+  /**
+   * Send an MCP progress notification for this call. Present only when the
+   * client asked for progress (sent a `progressToken`), so long-running tools
+   * (`run_playtest`) can keep a client's request timer alive. Fire-and-forget;
+   * a `progress` that doesn't increase is dropped, as the spec requires.
+   */
+  reportProgress?: (progress: number, total?: number, message?: string) => void;
 }
 
 /**

@@ -112,7 +112,13 @@ export const playtestStep = z.discriminatedUnion('action', [
       .describe('Start this troop now; omit to fight a battle an event already started.'),
     canEscape: z.boolean().optional(),
     canLose: z.boolean().optional(),
-    maxMs: z.number().int().positive().max(600000).optional().describe('Default 120000.'),
+    maxMs: z
+      .number()
+      .int()
+      .positive()
+      .max(600000)
+      .optional()
+      .describe('Give up after this long (default 60000).'),
   }),
   z.object({
     action: z.literal('screenshot'),

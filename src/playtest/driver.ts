@@ -16,8 +16,14 @@
 export const ENGINE_DRIVER = String.raw`
 (() => {
   if (window.__mcp) return;
-  const log = { text: [], choices: null };
+  // text: message lines, each tagged with whether it was shown in battle (a
+  // troop's battle event, victory/defeat messages) or on the map.
+  // transfer: the last completed player transfer, cleared by the Node side
+  // before a walk/startEvent so it can report where a door led.
+  const log = { text: [], choices: null, transfer: null };
   const sceneName = () => (SceneManager._scene ? SceneManager._scene.constructor.name : null);
+  const inBattle = () => !!(window.$gameParty && $gameParty.inBattle());
+  const pushText = (text) => log.text.push({ text, battle: inBattle() });
 
   // Record every message line the engine is asked to show, so advanceText can
   // report what was said without OCR. Installed lazily (Game_Message exists only
@@ -27,7 +33,7 @@ export const ENGINE_DRIVER = String.raw`
     window.__mcpHooked = true;
     const add = Game_Message.prototype.add;
     Game_Message.prototype.add = function (text) {
-      log.text.push(text);
+      pushText(text);
       return add.call(this, text);
     };
     const setChoices = Game_Message.prototype.setChoices;
@@ -38,10 +44,17 @@ export const ENGINE_DRIVER = String.raw`
     const setSpeakerName = Game_Message.prototype.setSpeakerName;
     if (setSpeakerName) {
       Game_Message.prototype.setSpeakerName = function (name) {
-        if (name) log.text.push('[' + name + ']');
+        if (name) pushText('[' + name + ']');
         return setSpeakerName.call(this, name);
       };
     }
+    const performTransfer = Game_Player.prototype.performTransfer;
+    Game_Player.prototype.performTransfer = function () {
+      const was = this.isTransferring();
+      const r = performTransfer.call(this);
+      if (was) log.transfer = { mapId: $gameMap.mapId(), x: this.x, y: this.y };
+      return r;
+    };
   };
 
   const itemOf = (kind, id) =>
@@ -188,6 +201,7 @@ export const ENGINE_DRIVER = String.raw`
       if (!ev) throw new Error('No event ' + id + ' on map ' + $gameMap.mapId());
       log.text = [];
       log.choices = null;
+      log.transfer = null;
       ev.start();
       return { name: ev.event().name };
     },
@@ -206,14 +220,45 @@ export const ENGINE_DRIVER = String.raw`
       return SceneManager.isSceneChanging();
     },
 
+    // Map-side lines as lines; anything shown in battle separately as
+    // battleLines, so a troop's battle-event text doesn't read as the map
+    // event's dialogue.
     takeText() {
-      const out = { lines: log.text, choices: this.choiceOpen() ? log.choices : null };
+      const lines = log.text.filter((l) => !l.battle).map((l) => l.text);
+      const battleLines = log.text.filter((l) => l.battle).map((l) => l.text);
+      const out = { lines, choices: this.choiceOpen() ? log.choices : null };
+      if (battleLines.length) out.battleLines = battleLines;
       log.text = [];
       return out;
     },
 
     peekText() {
-      return { lines: log.text.slice(), choices: log.choices };
+      return { lines: log.text.map((l) => l.text), choices: log.choices };
+    },
+
+    clearTransfer() {
+      log.transfer = null;
+      return true;
+    },
+
+    takeTransfer() {
+      const t = log.transfer;
+      log.transfer = null;
+      return t;
+    },
+
+    // What an event/transfer is doing right now, for settling after walk/startEvent.
+    flow() {
+      const s = sceneName();
+      const onMap = s === 'Scene_Map';
+      return {
+        scene: s,
+        changing: SceneManager.isSceneChanging(),
+        transferring: !!(window.$gamePlayer && $gamePlayer.isTransferring()),
+        mapReady: onMap ? this.mapReady() : false,
+        message: !!(window.$gameMessage && $gameMessage.isBusy()),
+        eventRunning: onMap && $gameMap.isEventRunning(),
+      };
     },
 
     choiceCount() {

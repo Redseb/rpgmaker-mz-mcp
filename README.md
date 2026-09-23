@@ -265,18 +265,20 @@ Boots the project's own `index.html` in a headless Chromium to check what valida
 - `render_map` — screenshot one map. By default it renders the **whole map** in one image (the canvas is resized to `width×height×48` px, the player is hidden, autorun/parallel events are frozen so a cutscene can't cover the map, and the map-name banner is off). Pass `x` + `y` to get a normal 816×624 game-screen view centred on that tile instead (the player is shown). `showEvents: false` draws bare tiles; `switches` turns switches on first to see a later story state; `runEvents: true` lets events run. Returns the PNG path and `problems`: console errors, page errors, and HTTP 404s (a missing image is drawn blank and listed there instead of stopping the engine on its load-error screen). Maps over 4800 px on a side need the `x`/`y` view.
 - `run_playtest` — run a script of steps in one browser session. Each step returns `ok` plus details, and the run stops at the first failing step:
   - `load` `{mapId, x, y, direction?, party?, level?, gold?, switches?, variables?, selfSwitches?, items?, equip?, encounters?}` starts a new game at that spot with that state. Random encounters stay off unless `encounters: true`.
-  - `startEvent` `{eventId}` triggers a map event.
-  - `advanceText` `{maxMs?}` presses OK until the event goes idle. It stops early at an open choice list or a battle, and returns the message lines shown (with speaker names) and any open choices.
+  - `startEvent` `{eventId}` triggers a map event and lets it run until it shows text or goes idle. If the event transfers the player, the step waits for the new map and reports it as `transferredTo` `{mapId, x, y}`.
+  - `advanceText` `{maxMs?}` presses OK until the event goes idle. It stops early at an open choice list or a battle, and returns the message lines shown (with speaker names) and any open choices. Text shown during a battle comes back separately as `battleLines`, so it isn't mixed into the map event's dialogue.
   - `choose` `{index}` picks a 0-based choice.
-  - `walk` `{direction, steps?}` walks tile by tile. It reports the tile it ended on and `blockedAt` if a tile refused entry, which is how you find invisible walls. It stops early when a touch event fires.
+  - `walk` `{direction, steps?}` walks tile by tile and reports the tile it ended on (`to`). If a tile refused entry, it reports both the player's tile (`stoppedAt`) and the tile that refused (`blockedTile`), which is how you find invisible walls. It stops early when a touch event fires; if that event is a door, it waits for the transfer to finish, so `to` and `transferredTo` are on the new map. `eventRunning`/`messageOpen` say the event is still going (follow up with `advanceText`).
   - `press` `{button, times?}` and `wait` `{ms}`.
-  - `autoBattle` `{troopId?, canEscape?, canLose?, maxMs?}` fights a battle that has already started, or starts `troopId`, on auto AI. It reports `victory`/`defeat`/`escaped` and the final HP of both sides.
+  - `autoBattle` `{troopId?, canEscape?, canLose?, maxMs?}` fights a battle that has already started, or starts `troopId`, on auto AI, giving up after `maxMs` (default 60 s). It reports `victory`/`defeat`/`escaped`, the final HP of both sides, and the battle's message `lines` (troop battle events, victory text).
   - `screenshot` `{name?}` saves a PNG.
   - `eval` `{script}` returns the value of a JS expression evaluated in the game page, such as `"$gameSwitches.value(3)"`.
 
   The response ends with `finalState` (scene, map, position, gold, party) and `problems`. `startEvent` and `autoBattle` refuse to start while an event or message is still running (for example, a map's autorun cutscene right after `load`) and tell you to `advanceText` first.
 
 **Requirements.** Both tools need `playwright-core`. It's an **optional dependency**, so a failed install never breaks the other tools; these two just return an error that tells you how to fix it. They also need a Chromium. No browser is downloaded: the server uses the newest `chrome-headless-shell` (or full Chromium) in the Playwright cache (`~/Library/Caches/ms-playwright`, `~/.cache/ms-playwright`, `%LOCALAPPDATA%\ms-playwright`, or `PLAYWRIGHT_BROWSERS_PATH`). If you don't have one, run `npx playwright install chromium-headless-shell`, or set `RPGMAKER_MCP_CHROMIUM` to any Chrome/Chromium executable. Each call takes about 1–2 s to boot, plus however long the script runs.
+
+**Long runs.** A `run_playtest` script with a battle can take a minute or more, which is longer than many MCP clients wait by default (the TypeScript SDK gives up after 60 s with `-32001 Request timed out`). If the client sends a `progressToken`, the server sends a progress notification for each step and every 5 s during long ones, so a client using `resetTimeoutOnProgress` (or a longer timeout) keeps waiting. If your client can do neither, split the script into several shorter runs.
 
 ### System & vocabulary
 
