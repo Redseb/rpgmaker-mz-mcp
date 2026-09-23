@@ -166,7 +166,7 @@ All 119 tools, grouped by area. Tools that write to the project accept an option
 
 ### Skills
 
-- `create_skill` (full control), `update_skill`, `search_skills`
+- `create_skill` (full control — every Skills.json field incl. `occasion`, `hitType`, `speed`, `repeats`, `successRate`, `tpGain`, required weapon types, `message2`, `note`; `hitType` defaults to magical for Magic skills, physical for other damage, certain for heals/ally scopes), `update_skill`, `search_skills`
 - `create_damage_skill`, `create_healing_skill`, `create_buff_skill`, `create_state_skill` — natural-language-friendly helpers for common skill types
 
 ### Items & equipment
@@ -262,7 +262,7 @@ Read-only builders that return editor-faithful `EventCommand` sequences; land th
 
 ### Batch creation
 
-- `batch_create` — create many records of one type (actors, items, weapons, armors, skills, enemies, states, classes) in a single call and a **single file write**; ids allocate sequentially, so a record can reference a sibling made earlier in the same batch
+- `batch_create` — create many records of one type (actors, items, weapons, armors, skills, enemies, states, classes) in a single call and a **single file write**; ids allocate sequentially, so a record can reference a sibling made earlier in the same batch; record fields the matching `create_*` tool doesn't accept come back as warnings instead of vanishing silently
 
 ### Index & validation
 

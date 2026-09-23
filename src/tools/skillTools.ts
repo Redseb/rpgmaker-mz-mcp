@@ -36,7 +36,36 @@ export interface SkillInput {
   }>;
   animationId?: number;
   message1?: string;
+  message2?: string;
   stypeId?: number;
+  occasion?: number;
+  hitType?: number;
+  speed?: number;
+  repeats?: number;
+  successRate?: number;
+  tpGain?: number;
+  requiredWtypeId1?: number;
+  requiredWtypeId2?: number;
+  note?: string;
+}
+
+/** Skill scopes that target the user or an ally (7–14) rather than an enemy. */
+function targetsAllies(scope: number): boolean {
+  return scope >= 7 && scope <= 14;
+}
+
+/**
+ * Default hit type for a new skill when the caller doesn't pass one:
+ * 0 (certain hit) for recovery and for anything aimed at the user/allies — it
+ * shouldn't be dodgeable or countered; otherwise 2 (magical) for a Magic skill
+ * (`stypeId` 1); otherwise 1 (physical) when the skill deals damage; otherwise
+ * 0. Keyed on the skill type, not the damage type — deriving it from
+ * `damage.type` turned every damaging spell into a physical hit.
+ */
+export function defaultSkillHitType(stypeId: number, scope: number, damageType: number): number {
+  if (damageType === 3 || damageType === 4 || targetsAllies(scope)) return 0;
+  if (stypeId === 1) return 2;
+  return damageType > 0 ? 1 : 0;
 }
 
 /**
@@ -49,35 +78,39 @@ export interface SkillInput {
 export function buildSkillRecord(existing: (Skill | null)[], input: SkillInput): Skill {
   const maxId = existing.reduce((max, skill) => (skill && skill.id > max ? skill.id : max), 0);
 
+  const stypeId = input.stypeId ?? 1; // Default: Magic
+  const scope = input.scope ?? 1; // Default: enemy single
+  const damageType = input.damage?.type ?? 0;
+
   return {
     id: maxId + 1,
     name: input.name,
-    description: input.description || '',
-    iconIndex: input.iconIndex || 64,
-    mpCost: input.mpCost || 0,
-    tpCost: input.tpCost || 0,
-    tpGain: 0,
-    scope: input.scope || 1, // Default: enemy single
-    occasion: 1, // Battle only
-    speed: 0,
-    successRate: 100,
-    repeats: 1,
-    hitType: input.damage?.type === 1 || input.damage?.type === 5 ? 1 : 2,
-    animationId: input.animationId || 0,
+    description: input.description ?? '',
+    iconIndex: input.iconIndex ?? 64,
+    mpCost: input.mpCost ?? 0,
+    tpCost: input.tpCost ?? 0,
+    tpGain: input.tpGain ?? 0,
+    scope,
+    occasion: input.occasion ?? 1, // Default: battle only
+    speed: input.speed ?? 0,
+    successRate: input.successRate ?? 100,
+    repeats: input.repeats ?? 1,
+    hitType: input.hitType ?? defaultSkillHitType(stypeId, scope, damageType),
+    animationId: input.animationId ?? 0,
     damage: {
-      type: input.damage?.type || 0,
-      elementId: input.damage?.elementId || 0,
-      formula: input.damage?.formula || '0',
-      variance: input.damage?.variance !== undefined ? input.damage.variance : 20,
-      critical: input.damage?.critical !== undefined ? input.damage.critical : false,
+      type: damageType,
+      elementId: input.damage?.elementId ?? 0,
+      formula: input.damage?.formula ?? '0',
+      variance: input.damage?.variance ?? 20,
+      critical: input.damage?.critical ?? false,
     },
-    effects: input.effects || [],
-    message1: input.message1 || '',
-    message2: '',
-    note: '',
-    stypeId: input.stypeId || 1, // Default: Magic
-    requiredWtypeId1: 0,
-    requiredWtypeId2: 0,
+    effects: input.effects ?? [],
+    message1: input.message1 ?? '',
+    message2: input.message2 ?? '',
+    note: input.note ?? '',
+    stypeId,
+    requiredWtypeId1: input.requiredWtypeId1 ?? 0,
+    requiredWtypeId2: input.requiredWtypeId2 ?? 0,
     messageType: 1,
     traits: [],
   };
@@ -349,7 +382,7 @@ export const skillToolDefinitions: ToolDefinition[] = [
     name: 'create_skill',
     mutates: true,
     description:
-      'Create a new skill with custom properties. An effect referencing a missing record throws: Add/Remove State (code 21/22) → state, Learn Skill (43) → skill, Common Event (44) → common event.',
+      'Create a new skill with custom properties. Omitted fields use new-skill defaults: stypeId 1 (Magic), scope 1, occasion 1 (battle only), hitType derived — 0 certain for recovery or ally/user scopes, else 2 magical for Magic skills, else 1 physical if it deals damage, else 0. An effect referencing a missing record throws: Add/Remove State (code 21/22) → state, Learn Skill (43) → skill, Common Event (44) → common event.',
     inputSchema: {
       name: z.string().describe('Skill name'),
       description: z.string().optional().describe('Skill description'),
@@ -387,8 +420,59 @@ export const skillToolDefinitions: ToolDefinition[] = [
         .optional()
         .describe('Skill effects (buffs, debuffs, states, etc.)'),
       animationId: z.number().int().min(0).optional().describe('Animation ID'),
-      message1: z.string().optional().describe('Battle message'),
-      stypeId: z.number().int().min(0).optional().describe('Skill type (1=magic, 2=special, etc.)'),
+      message1: z.string().optional().describe('Battle message (line 1, %1 = user name)'),
+      message2: z.string().optional().describe('Battle message line 2'),
+      stypeId: z
+        .number()
+        .int()
+        .min(0)
+        .optional()
+        .describe(
+          'Skill type (0=none — typical for enemy-only skills, not sealed by Silence; 1=magic, 2=special, etc.). Default 1',
+        ),
+      occasion: z
+        .number()
+        .int()
+        .min(0)
+        .max(3)
+        .optional()
+        .describe('Usable: 0 always, 1 battle only (default), 2 menu only, 3 never'),
+      hitType: z
+        .number()
+        .int()
+        .min(0)
+        .max(2)
+        .optional()
+        .describe(
+          '0 certain hit, 1 physical (HIT/EVA, counterable), 2 magical (MEV, reflectable). Default derived from stypeId/scope/damage',
+        ),
+      speed: z
+        .number()
+        .int()
+        .optional()
+        .describe('Speed correction (-2000..2000; positive acts earlier). Default 0'),
+      repeats: z.number().int().min(1).optional().describe('Number of hits (1-9). Default 1'),
+      successRate: z
+        .number()
+        .int()
+        .min(0)
+        .max(100)
+        .optional()
+        .describe('Success rate percent. Default 100'),
+      tpGain: z.number().int().min(0).optional().describe('User TP gained on use. Default 0'),
+      requiredWtypeId1: z
+        .number()
+        .int()
+        .min(0)
+        .optional()
+        .describe('Required weapon type 1 (0=none)'),
+      requiredWtypeId2: z
+        .number()
+        .int()
+        .min(0)
+        .optional()
+        .describe('Required weapon type 2 (0=none)'),
+      note: z.string().optional().describe('Note field (notetags)'),
     },
     handler: (ctx, args) => createSkill(ctx.projectPath, args as Parameters<typeof createSkill>[1]),
   },

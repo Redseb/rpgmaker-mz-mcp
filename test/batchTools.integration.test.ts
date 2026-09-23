@@ -7,6 +7,7 @@ import { getActors } from '../src/tools/actorTools.js';
 import { getItems } from '../src/tools/itemTools.js';
 import { getEnemies } from '../src/tools/battleTools.js';
 import { getClasses } from '../src/tools/classTools.js';
+import { getSkills } from '../src/tools/skillTools.js';
 import { CommitContext, commitStore } from '../src/utils/commit.js';
 import { ToolContext } from '../src/registry.js';
 
@@ -125,6 +126,39 @@ describe('batch_create (integration)', () => {
     });
     expect(result.count).toBe(2);
     expect(result.created[1]).toMatchObject({ effects: [{ code: 43, dataId: 1 }] });
+  });
+
+  it('round-trips every skill field (no silent drops, 0 is a real value)', async () => {
+    const record = {
+      name: 'Tail Swipe',
+      occasion: 0,
+      hitType: 2,
+      repeats: 2,
+      speed: 100,
+      stypeId: 0,
+      iconIndex: 0,
+      successRate: 90,
+      tpGain: 5,
+      requiredWtypeId1: 2,
+      requiredWtypeId2: 3,
+      message2: 'It lashes out!',
+      note: '<Tag>',
+    };
+    const result = await run(dir, { type: 'skill', records: [record] });
+    expect(result.warnings).toBeUndefined();
+    expect(result.created[0]).toMatchObject(record);
+    expect((await getSkills(dir))[1]).toMatchObject(record);
+  });
+
+  it('warns (never blocks) on record fields the create_* tool does not accept', async () => {
+    const result = await run(dir, {
+      type: 'skill',
+      records: [{ name: 'Ok' }, { name: 'Typo', hitTyp: 2, bogus: 1 }],
+    });
+    expect(result.count).toBe(2);
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings![0]!.path).toBe('records[1]');
+    expect(result.warnings![0]!.message).toMatch(/"hitTyp", "bogus".*create_skill/);
   });
 
   it('surfaces enemy battler warnings tagged by record index', async () => {

@@ -346,6 +346,7 @@ export const itemToolDefinitions: ToolDefinition[] = [
       occasion: z.number().int().optional().describe('Usable: 0 always, 1 battle, 2 menu, 3 never'),
       price: z.number().int().optional().describe('Buy price (sells for half)'),
       consumable: z.boolean().optional().describe('Consumed on use'),
+      speed: z.number().int().optional().describe('Speed correction (positive acts earlier)'),
       successRate: z.number().int().optional().describe('Success rate percent'),
       repeats: z.number().int().optional().describe('Number of hits/repeats'),
       tpGain: z.number().int().optional().describe('User TP gained on use'),

@@ -5,8 +5,9 @@ import { getDataPath } from '../utils/fileHandler.js';
 import { ValidationWarning } from '../validation/eventCommands.js';
 import { Actor, Armor, Enemy, Item, State, Weapon } from '../utils/types.js';
 
-import { getActors, buildActorRecord } from './actorTools.js';
+import { getActors, buildActorRecord, actorToolDefinitions } from './actorTools.js';
 import {
+  itemToolDefinitions,
   getItems,
   getWeapons,
   getArmors,
@@ -15,15 +16,28 @@ import {
   buildArmorRecord,
   assertItemEffectRefs,
 } from './itemTools.js';
-import { getSkills, buildSkillRecord, assertSkillEffectRefs, SkillInput } from './skillTools.js';
 import {
+  getSkills,
+  buildSkillRecord,
+  assertSkillEffectRefs,
+  SkillInput,
+  skillToolDefinitions,
+} from './skillTools.js';
+import {
+  battleToolDefinitions,
   getEnemies,
   buildEnemyRecord,
   assertEnemyRefs,
   battlerNameWarnings,
 } from './battleTools.js';
-import { getStates, buildStateRecord } from './stateTools.js';
-import { getClasses, buildClassRecord, summarizeClass, ClassInput } from './classTools.js';
+import { getStates, buildStateRecord, stateToolDefinitions } from './stateTools.js';
+import {
+  getClasses,
+  buildClassRecord,
+  summarizeClass,
+  ClassInput,
+  classToolDefinitions,
+} from './classTools.js';
 
 /**
  * Entity types `batch_create` can append to. Each maps to one 1-indexed database
@@ -41,6 +55,60 @@ const BATCH_TYPES = [
 ] as const;
 
 type BatchType = (typeof BATCH_TYPES)[number];
+
+/** The single create_* tool whose fields each batch type accepts. */
+const CREATE_TOOL: Record<BatchType, string> = {
+  actor: 'create_actor',
+  item: 'create_item',
+  weapon: 'create_weapon',
+  armor: 'create_armor',
+  skill: 'create_skill',
+  enemy: 'create_enemy',
+  state: 'create_state',
+  class: 'create_class',
+};
+
+/**
+ * The field names each batch type accepts, read off its create_* tool's input
+ * schema so the two can never drift. Resolved lazily — the definition arrays
+ * belong to sibling modules.
+ */
+function knownFields(type: BatchType): Set<string> {
+  const defs = [
+    ...actorToolDefinitions,
+    ...itemToolDefinitions,
+    ...skillToolDefinitions,
+    ...battleToolDefinitions,
+    ...stateToolDefinitions,
+    ...classToolDefinitions,
+  ];
+  const def = defs.find((d) => d.name === CREATE_TOOL[type]);
+  return new Set(def ? Object.keys(def.inputSchema) : []);
+}
+
+/**
+ * Flag keys a record carries that its create_* tool doesn't accept. A single
+ * create_* call has these stripped by schema validation; batch records are a
+ * free-form map, so without this a typo or an unsupported field vanished (or was
+ * written verbatim) with no hint. Advisory only — never blocks the batch.
+ */
+function unknownFieldWarnings(
+  type: BatchType,
+  records: Record<string, unknown>[],
+): ValidationWarning[] {
+  const known = knownFields(type);
+  const warnings: ValidationWarning[] = [];
+  for (const [index, record] of records.entries()) {
+    const unknown = Object.keys(record).filter((key) => !known.has(key));
+    if (unknown.length > 0) {
+      warnings.push({
+        path: `records[${index}]`,
+        message: `Unrecognized field(s) ${unknown.map((k) => `"${k}"`).join(', ')} — not accepted by ${CREATE_TOOL[type]} (check the spelling); they may be ignored or written verbatim.`,
+      });
+    }
+  }
+  return warnings;
+}
 
 /**
  * How one entity type is batched. Mirrors what its single `create_*` tool does,
@@ -240,7 +308,7 @@ export const batchToolDefinitions: ToolDefinition[] = [
     name: 'batch_create',
     mutates: true,
     description:
-      "Create many database records of one type in a single call and a single file write — the batch sibling of create_actor/create_item/create_weapon/create_armor/create_skill/create_enemy/create_state/create_class. Each entry in `records` takes the same fields its single create_* tool accepts (only `name` is required for most; omitted fields use the editor's defaults). Ids are allocated sequentially from the current max, so a record can reference a sibling created earlier in the same batch. Use this instead of N sequential create_* calls when authoring a cast, a loot table, or a skill list. Returns `{ type, count, created, warnings? }` (classes are summarized like create_class; enemy battlerName misses are warnings, never blocked). Throws — writing nothing at all — if any record references a database id that does not exist, naming the offending records[i].",
+      "Create many database records of one type in a single call and a single file write — the batch sibling of create_actor/create_item/create_weapon/create_armor/create_skill/create_enemy/create_state/create_class. Each entry in `records` takes the same fields its single create_* tool accepts (only `name` is required for most; omitted fields use the editor's defaults). Ids are allocated sequentially from the current max, so a record can reference a sibling created earlier in the same batch. Use this instead of N sequential create_* calls when authoring a cast, a loot table, or a skill list. Returns `{ type, count, created, warnings? }` (classes are summarized like create_class; enemy battlerName misses and record fields the create_* tool doesn't accept are warnings, never blocked). Throws — writing nothing at all — if any record references a database id that does not exist, naming the offending records[i].",
     inputSchema: {
       type: z.enum(BATCH_TYPES).describe('Which database the records are appended to'),
       records: z
@@ -250,11 +318,13 @@ export const batchToolDefinitions: ToolDefinition[] = [
           'The records to create, each shaped like the matching create_* tool\'s arguments (e.g. for type "actor": { name, classId?, ... })',
         ),
     },
-    handler: async (ctx, args) =>
-      batchCreate(
-        ctx.projectPath,
-        args.type as BatchType,
-        args.records as Record<string, unknown>[],
-      ),
+    handler: async (ctx, args) => {
+      const type = args.type as BatchType;
+      const records = args.records as Record<string, unknown>[];
+      const result = await batchCreate(ctx.projectPath, type, records);
+      const unknown = unknownFieldWarnings(type, records);
+      if (unknown.length === 0) return result;
+      return { ...result, warnings: [...unknown, ...(result.warnings ?? [])] };
+    },
   },
 ];
