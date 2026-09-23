@@ -112,7 +112,7 @@ async function loadSidecar(
  * built-in names came from that same file) and a project catalog for it still
  * replaces the built-in names wholesale, as before.
  */
-async function loadCatalogOverlay(
+export async function loadCatalogOverlay(
   projectPath: string,
   tilesetNames: string[],
 ): Promise<CatalogOverlay | undefined> {

@@ -135,8 +135,12 @@ describe('paint tools (integration)', () => {
     expect(res.warnings?.some((w) => w.includes('not a tile layer'))).toBe(true);
   });
 
-  it('is available as two registered mutating tools', () => {
-    expect(paintToolDefinitions.map((t) => t.name).sort()).toEqual(['fill_area', 'paint_tiles']);
+  it('is available as three registered mutating tools', () => {
+    expect(paintToolDefinitions.map((t) => t.name).sort()).toEqual([
+      'fill_area',
+      'paint_blueprint',
+      'paint_tiles',
+    ]);
     expect(paintToolDefinitions.every((t) => t.mutates)).toBe(true);
     // sanity: the map module it builds on is present too
     expect(mapToolDefinitions.some((t) => t.name === 'set_map_tile')).toBe(true);

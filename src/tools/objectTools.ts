@@ -40,7 +40,7 @@ function layeredTileIds(map: MapData, x: number, y: number): number[] {
 }
 
 /** Layered passability + terrain tag of a cell as the map currently stands. */
-function cellPassability(
+export function cellPassability(
   map: MapData,
   tileset: Tileset,
   x: number,
@@ -51,7 +51,7 @@ function cellPassability(
 }
 
 /** A cell with no walkable direction is impassable ground (water, cliff, wall, …). */
-function isBlocked(p: Passability): boolean {
+export function isBlocked(p: Passability): boolean {
   return !p.down && !p.left && !p.right && !p.up;
 }
 

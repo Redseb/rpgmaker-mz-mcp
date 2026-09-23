@@ -296,3 +296,37 @@ export function mergeSheetOverlay(
 export function hasCatalog(tilesetNames: string[], overlay?: CatalogOverlay): boolean {
   return tilesetNames.some((f) => f && (CATALOG[f] || overlay?.[f]));
 }
+
+/**
+ * Resolve a catalog tile name to exactly one tile id, for tools that accept a
+ * name wherever a tile id goes (e.g. `paint_blueprint`'s legend). An exact
+ * (case-insensitive) name match wins; failing that, a unique substring match
+ * (the {@link findTiles} rule). Throws when nothing matches or when the match is
+ * ambiguous (several distinct tile ids), listing the candidates so the caller
+ * can pick a longer name or pass the id.
+ */
+export function resolveTileName(
+  tilesetNames: string[],
+  name: string,
+  overlay?: CatalogOverlay,
+): number {
+  const q = name.toLowerCase();
+  const matches = findTiles(tilesetNames, name, overlay);
+  const exact = matches.filter((m) => m.name.toLowerCase() === q);
+  const pool = exact.length > 0 ? exact : matches;
+  const ids = [...new Set(pool.map((m) => m.tileId))];
+  if (ids.length === 1) return ids[0];
+  if (ids.length === 0) {
+    throw new Error(
+      `no catalog tile matches "${name}" in this tileset — check get_tile_catalog / find_tile, or pass a tile id`,
+    );
+  }
+  const shown = pool
+    .slice(0, 8)
+    .map((m) => `"${m.name}" (${m.sheet}, ${m.tileId})`)
+    .join(', ');
+  const more = pool.length > 8 ? `, … ${pool.length - 8} more` : '';
+  throw new Error(
+    `"${name}" is ambiguous — it matches ${pool.length} catalog tiles: ${shown}${more}. Use a more specific name or a tile id`,
+  );
+}
