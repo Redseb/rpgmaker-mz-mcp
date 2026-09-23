@@ -2,6 +2,7 @@ import { dirname, join } from 'path';
 import { EngineSession, openSession } from './session.js';
 import { resolvePngPath, safeName, stamp } from './output.js';
 import { checkSteps, DIRECTION_CODE, LoadStep, PlaytestStep } from './steps.js';
+import { stripControlCodes } from './text.js';
 
 /**
  * `run_playtest`: execute a scripted play session headless and report what
@@ -36,8 +37,38 @@ interface TextLog {
   choices: string[] | null;
 }
 
-/** Default `autoBattle.maxMs` — kept under the MCP SDK's 60 s request timeout. */
+/**
+ * Read the page's message log (`takeText` or `peekText`) as the player saw it,
+ * with the message window's control codes stripped.
+ */
+async function readText(s: EngineSession, fn: 'takeText' | 'peekText'): Promise<TextLog> {
+  const t = await s.call<TextLog>(fn);
+  const clean = (lines: string[]) => lines.map(stripControlCodes);
+  return {
+    lines: clean(t.lines),
+    ...(t.battleLines ? { battleLines: clean(t.battleLines) } : {}),
+    choices: t.choices ? clean(t.choices) : null,
+  };
+}
+
+/**
+ * Default `autoBattle.maxMs`. Kept under the MCP SDK's 60 s request timeout;
+ * with battles fast-forwarded that fits a multi-turn boss fight.
+ */
 export const AUTO_BATTLE_MAX_MS = 60000;
+
+/**
+ * Engine frames run per animation frame while a battle is on screen, unless the
+ * run asks for `realtime`. A 10-turn boss fight that takes ~70 s in real time
+ * finishes in ~4 s; going higher gains little, since what's left is the
+ * victory messages waiting for OK presses.
+ */
+export const BATTLE_SPEED = 20;
+
+/** The battle frame multiplier for a run's options (1 = real time). */
+export function battleSpeedFor(opts: { realtime?: boolean }): number {
+  return opts.realtime ? 1 : BATTLE_SPEED;
+}
 
 /** How often a long step sends a progress heartbeat (when the client asked for progress). */
 const HEARTBEAT_MS = 5000;
@@ -87,7 +118,7 @@ const doLoad: StepFn<LoadStep> = async (s, step) => {
  */
 async function assertIdle(s: EngineSession, what: string): Promise<void> {
   if (await s.call<boolean>('busy')) {
-    const text = await s.call<TextLog>('peekText');
+    const text = await readText(s, 'peekText');
     const last = text.lines.slice(-2).join(' / ');
     throw new Error(
       `Can't ${what}: an event or message is still running${last ? ` (last text: "${last}")` : ''}. ` +
@@ -124,7 +155,7 @@ async function advanceText(s: EngineSession, maxMs: number): Promise<Record<stri
     await s.press('ok');
     await s.page.waitForTimeout(90);
   }
-  const text = await s.call<TextLog>('takeText');
+  const text = await readText(s, 'takeText');
   return {
     stoppedAt,
     lines: text.lines,
@@ -308,7 +339,7 @@ async function autoBattle(
   await s.page.waitForTimeout(300);
   // The battle's own messages (troop battle events, victory/defeat text), taken
   // here so a later advanceText reports only what the map says afterwards.
-  const text = await s.call<TextLog>('takeText');
+  const text = await readText(s, 'takeText');
   const battleLines = [...(text.battleLines ?? []), ...text.lines];
   return {
     outcome: await s.call('battleOutcome'),
@@ -397,6 +428,8 @@ export async function runPlaytest(
     out?: string;
     /** Progress sink (MCP progress notifications): called per step and as a heartbeat during long ones. */
     onProgress?: (progress: number, total: number, message: string) => void;
+    /** Play battles at real-time speed instead of fast-forwarding them (`BATTLE_SPEED`). */
+    realtime?: boolean;
   } = {},
 ): Promise<PlaytestResult> {
   const preflight = checkSteps(steps);
@@ -414,6 +447,7 @@ export async function runPlaytest(
     progress.phase(0, 'Booting the game');
     const session = await openSession(projectPath);
     try {
+      await session.call('setBattleSpeed', battleSpeedFor(opts));
       for (let index = 0; index < steps.length; index++) {
         const step = steps[index];
         progress.phase(index + 1, `Step ${index + 1}/${steps.length}: ${step.action}`);

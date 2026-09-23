@@ -86,11 +86,11 @@ export const playtestToolDefinitions: ToolDefinition[] = [
       '`choose` {index} picks a 0-based choice; ' +
       "`walk` {direction, steps?} walks tile by tile, reporting where it ended (`to`); if a tile refused entry, `stoppedAt` (the player's tile) and `blockedTile` (the refused one); when a step fires a touch event (a door) it stops, waits out the transfer and reports `transferredTo` {mapId,x,y}, plus `eventRunning`/`messageOpen` if the event is still going; " +
       '`press` {button, times?}; `wait` {ms}; ' +
-      "`autoBattle` {troopId?, canEscape?, canLose?, maxMs? (default 60000)} fights (a started or new battle) on auto AI until it ends, returning the battle's message `lines` (troop events, victory text); " +
+      "`autoBattle` {troopId?, canEscape?, canLose?, maxMs? (default 60000)} fights (a started or new battle) on auto AI until it ends, returning the battle's message `lines` (troop events, victory text). Battles are fast-forwarded (20 engine frames per drawn frame: same logic, same odds, a 10-turn boss fight in seconds) unless the run sets realtime: true; " +
       '`screenshot` {name?} saves a PNG; ' +
       '`eval` {script} evaluates a JS expression in the game page and returns its value (e.g. "$gameSwitches.value(3)"). ' +
-      `Every step result carries ok; the response ends with finalState (scene, map, position, gold, party) and problems (console/page errors, HTTP 404s). Max ${MAX_STEPS} steps. Read-only: never writes the project. ` +
-      'A run can take MINUTES (booting ~5-10 s, a battle up to a minute): clients should raise their request timeout, or send a progressToken with resetTimeoutOnProgress — the tool then sends a progress notification per step and every 5 s during long ones. Split long scripts into several runs if your client can do neither. ' +
+      `Reported text reads as the message window shows it: \\V[n]/\\N[n]/\\P[n]/\\G expanded, control codes (\\C[n], \\I[n], \\., \\| …) removed. Every step result carries ok; the response ends with finalState (scene, map, position, gold, party) and problems (console/page errors, HTTP 404s). Max ${MAX_STEPS} steps. Read-only: never writes the project. ` +
+      'A run can take MINUTES (booting ~5-10 s, long cutscenes, realtime battles): clients should raise their request timeout, or send a progressToken with resetTimeoutOnProgress — the tool then sends a progress notification per step and every 5 s during long ones. Split long scripts into several runs if your client can do neither. ' +
       REQUIREMENTS,
     inputSchema: {
       steps: playtestSteps.describe('The script, run in order.'),
@@ -99,9 +99,19 @@ export const playtestToolDefinitions: ToolDefinition[] = [
         .optional()
         .describe('Directory for screenshot PNGs. Default: <os tmpdir>/rpgmaker-mz-mcp/renders.'),
       inline: inlineArg,
+      realtime: z
+        .boolean()
+        .optional()
+        .describe(
+          'Play battles at real-time speed (default false: battles are fast-forwarded). Real time takes ~10-20x longer — raise autoBattle maxMs to match.',
+        ),
     },
     handler: (ctx, args) =>
-      runPlaytest(ctx.projectPath, args.steps, { out: args.out, onProgress: ctx.reportProgress }),
+      runPlaytest(ctx.projectPath, args.steps, {
+        out: args.out,
+        onProgress: ctx.reportProgress,
+        realtime: args.realtime,
+      }),
     images: (result, args) => (args.inline ? (result as PlaytestResult).screenshots : []),
   },
 ];

@@ -25,6 +25,30 @@ export const ENGINE_DRIVER = String.raw`
   const inBattle = () => !!(window.$gameParty && $gameParty.inBattle());
   const pushText = (text) => log.text.push({ text, battle: inBattle() });
 
+  // Run message text through the engine's own escape conversion, as the message
+  // window does when it shows it: \V[n], \N[n], \P[n] and \G expand from the
+  // current game state and \\ becomes a backslash. The control codes left
+  // (\C[n], \I[n], \., \| …) come back ESC-prefixed; the Node side strips them
+  // (stripControlCodes in text.ts). Window_Message's prototype picks up plugin
+  // extensions; if one needs a live window, fall back to the bare \ → ESC step.
+  const convert = (text) => {
+    const raw = String(text == null ? '' : text);
+    try {
+      const proto = (window.Window_Message || Window_Base).prototype;
+      return String(proto.convertEscapeCharacters.call(proto, raw));
+    } catch (e) {
+      return raw.replace(/\\/g, '\x1b').replace(/\x1b\x1b/g, '\\');
+    }
+  };
+
+  // Battle fast-forward: while Scene_Battle is on screen, run this many engine
+  // frames per animation frame (1 = real time). Every battle wait — log
+  // messages, animations, collapse effects, fades — is counted in frames, so the
+  // battle plays out exactly as it would, just sooner, with one frame in N drawn.
+  // The map stays real time, so walking and message handling are unaffected.
+  let battleSpeed = 1;
+  const fastBattle = () => battleSpeed > 1 && SceneManager._scene instanceof Scene_Battle;
+
   // Record every message line the engine is asked to show, so advanceText can
   // report what was said without OCR. Installed lazily (Game_Message exists only
   // once the engine scripts have loaded).
@@ -33,19 +57,33 @@ export const ENGINE_DRIVER = String.raw`
     window.__mcpHooked = true;
     const add = Game_Message.prototype.add;
     Game_Message.prototype.add = function (text) {
-      pushText(text);
+      pushText(convert(text));
       return add.call(this, text);
     };
     const setChoices = Game_Message.prototype.setChoices;
     Game_Message.prototype.setChoices = function (choices, def, cancel) {
-      log.choices = choices.slice();
+      log.choices = choices.map(convert);
       return setChoices.call(this, choices, def, cancel);
     };
     const setSpeakerName = Game_Message.prototype.setSpeakerName;
     if (setSpeakerName) {
       Game_Message.prototype.setSpeakerName = function (name) {
-        if (name) pushText('[' + name + ']');
+        if (name) pushText('[' + convert(name) + ']');
         return setSpeakerName.call(this, name);
+      };
+    }
+    if (SceneManager.determineRepeatNumber) {
+      const repeat = SceneManager.determineRepeatNumber;
+      SceneManager.determineRepeatNumber = function (deltaTime) {
+        const n = repeat.call(this, deltaTime);
+        return fastBattle() ? n * battleSpeed : n;
+      };
+    } else {
+      // An engine without determineRepeatNumber: repeat the frame update itself.
+      const updateMain = SceneManager.updateMain;
+      SceneManager.updateMain = function () {
+        const n = fastBattle() ? battleSpeed : 1;
+        for (let i = 0; i < n; i++) updateMain.call(this);
       };
     }
     const performTransfer = Game_Player.prototype.performTransfer;
@@ -268,6 +306,11 @@ export const ENGINE_DRIVER = String.raw`
     selectChoice(i) {
       const c = SceneManager._scene._messageWindow._choiceListWindow;
       c.select(i);
+      return true;
+    },
+
+    setBattleSpeed(n) {
+      battleSpeed = Math.max(1, Math.floor(n));
       return true;
     },
 

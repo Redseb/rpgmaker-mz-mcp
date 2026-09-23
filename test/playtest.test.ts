@@ -11,8 +11,10 @@ import { planRender, MAX_RENDER_EDGE_PX } from '../src/playtest/render.js';
 import { checkSteps, playtestSteps } from '../src/playtest/steps.js';
 import { driverCall } from '../src/playtest/session.js';
 import { safeName } from '../src/playtest/output.js';
-import { progressTicker } from '../src/playtest/playtest.js';
+import { battleSpeedFor, BATTLE_SPEED, progressTicker } from '../src/playtest/playtest.js';
+import { stripControlCodes } from '../src/playtest/text.js';
 import { playtestToolDefinitions } from '../src/tools/playtestTools.js';
+import { z } from 'zod';
 
 describe('resolveRequestPath', () => {
   const root = resolve('/proj');
@@ -174,5 +176,47 @@ describe('progressTicker', () => {
       t.phase(1, 'x');
       t.stop();
     }).not.toThrow();
+  });
+});
+
+describe('stripControlCodes', () => {
+  // Input is what the engine's convertEscapeCharacters leaves: \V/\N/\P/\G
+  // already expanded, \\ already a lone backslash, other codes ESC-prefixed.
+  const esc = (s: string) => s.replace(/~/g, '\x1b');
+
+  it('drops the wait/instant/input codes the victory text carries', () => {
+    expect(stripControlCodes(esc('~.92 EXP received!'))).toBe('92 EXP received!');
+    expect(stripControlCodes(esc('~.320G found!'))).toBe('320G found!');
+    expect(stripControlCodes(esc('a~|b~!c~>d~<e~^f~$'))).toBe('abcdef');
+  });
+
+  it('drops codes with parameters, font-size braces and plugin codes', () => {
+    expect(stripControlCodes(esc('~C[2]red~C[0] ~I[64]Potion'))).toBe('red Potion');
+    expect(stripControlCodes(esc('~{BIG~} ~FS[30]x~PX[4]y~PY[2]'))).toBe('BIG xy');
+    expect(stripControlCodes(esc('~MSG[left]hi'))).toBe('hi');
+  });
+
+  it('keeps literal backslashes, brackets and plain text', () => {
+    expect(stripControlCodes('a\\b [note] 50%')).toBe('a\\b [note] 50%');
+    expect(stripControlCodes('Kael has 42 G!')).toBe('Kael has 42 G!');
+    expect(stripControlCodes(esc('stray ~'))).toBe('stray ');
+  });
+});
+
+describe('run_playtest options', () => {
+  it('fast-forwards battles unless realtime is set', () => {
+    expect(BATTLE_SPEED).toBeGreaterThan(1);
+    expect(battleSpeedFor({})).toBe(BATTLE_SPEED);
+    expect(battleSpeedFor({ realtime: false })).toBe(BATTLE_SPEED);
+    expect(battleSpeedFor({ realtime: true })).toBe(1);
+  });
+
+  it('accepts a boolean realtime flag only', () => {
+    const play = playtestToolDefinitions.find((t) => t.name === 'run_playtest')!;
+    const schema = z.object(play.inputSchema);
+    const steps = [{ action: 'wait', ms: 1 }];
+    expect(schema.parse({ steps, realtime: true }).realtime).toBe(true);
+    expect(schema.parse({ steps }).realtime).toBeUndefined();
+    expect(schema.safeParse({ steps, realtime: 'yes' }).success).toBe(false);
   });
 });
