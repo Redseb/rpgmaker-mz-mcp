@@ -12,11 +12,18 @@ import {
 import { validateEventTool, validateProjectTool } from '../src/tools/validationTools.js';
 import { MapEvent, EventPage } from '../src/utils/types.js';
 
-/** Fixture tiles: 100 = fully passable floor, 200 = blocked all directions. */
+/**
+ * Fixture tiles: 100 = fully passable floor, 200 = blocked all directions,
+ * 33 = a [*] star B-sheet landmark (drawn, but passable — "Temple B").
+ */
 const FLOOR = 100;
 const WALL = 200;
+const LANDMARK = 33;
 
-/** Scaffold a project + one 5x5 map: floor everywhere, a wall tile at (2, 2). */
+/**
+ * Scaffold a project + one 5x5 map: floor everywhere, a wall tile at (2, 2) and
+ * a passable upper-layer landmark drawn over the floor at (3, 3).
+ */
 async function scaffold(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'rpgmz-wall-'));
   await writeFile(join(dir, 'game.rmmzproject'), 'RPGMZ 1.0.0');
@@ -31,10 +38,12 @@ async function scaffold(): Promise<string> {
   for (let y = 0; y < 5; y++)
     for (let x = 0; x < 5; x++) map.data[tileIndex(5, 5, x, y, 0)] = FLOOR;
   map.data[tileIndex(5, 5, 2, 2, 0)] = WALL;
+  map.data[tileIndex(5, 5, 3, 3, 2)] = LANDMARK;
   await writeFile(join(dir, 'data', 'Map001.json'), JSON.stringify(map));
 
   const flags = new Array(8192).fill(0);
   flags[0] = 0x10; // empty tile is a [*] star, per the engine
+  flags[LANDMARK] = 0x10; // [*] star: drawn above the player, passable
   flags[WALL] = 0x0f; // impassable all directions
   await writeFile(
     join(dir, 'data', 'Tilesets.json'),
@@ -104,6 +113,27 @@ describe('invisible-wall advisory (integration)', () => {
     }
   });
 
+  it('stays quiet on an action-button solid landmark over a drawn B/C object', async () => {
+    const { event, warnings } = (await createMapEventDef.handler(
+      { projectPath: dir },
+      { mapId: 1, name: 'Temple', x: 3, y: 3, pages: [blankSame({ trigger: 0 })] },
+    )) as Result;
+    expect(warnings ?? []).toEqual([]);
+
+    const single = await validateEventTool(dir, 1, event.id);
+    expect(single.warnings.filter(isWall)).toEqual([]);
+    const project = await validateProjectTool(dir);
+    expect(project.warnings.filter(isWall)).toEqual([]);
+  });
+
+  it('still warns on a touch page over a drawn B/C object', async () => {
+    const { warnings } = (await createMapEventDef.handler(
+      { projectPath: dir },
+      { mapId: 1, name: 'Temple', x: 3, y: 3, pages: [blankSame({ trigger: 1 })] },
+    )) as Result;
+    expect((warnings ?? []).filter(isWall)).toHaveLength(1);
+  });
+
   it("flags a cutscene NPC's blanked self-switch 'after' page, and validate_* report it", async () => {
     const { event, warnings } = (await createMapEventDef.handler(
       { projectPath: dir },
@@ -158,5 +188,14 @@ describe('invisibleWallFindings (pure)', () => {
 
   it('never fires when the cell is not walkable', () => {
     expect(invisibleWallFindings(event([{ priorityType: 1 }]), false)).toEqual([]);
+  });
+
+  it('skips only action-button pages when the cell has a drawn object', () => {
+    expect(invisibleWallFindings(event([{ priorityType: 1, trigger: 0 }]), true, true)).toEqual([]);
+    for (const trigger of [1, 2, 3, 4]) {
+      expect(invisibleWallFindings(event([{ priorityType: 1, trigger }]), true, true)).toEqual([
+        expect.objectContaining({ path: 'event 3 / page 0', severity: 'warning' }),
+      ]);
+    }
   });
 });
