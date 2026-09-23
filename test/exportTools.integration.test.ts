@@ -3,13 +3,44 @@ import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { dirname, join } from 'path';
 import { inflateRawSync } from 'zlib';
-import { exportWeb, exportToolDefinitions, ExportWebResult } from '../src/tools/exportTools.js';
+import {
+  exportWeb,
+  exportToolDefinitions,
+  ExportWebResult,
+  parseEffekseerDependencies,
+} from '../src/tools/exportTools.js';
 import { crc32 } from '../src/utils/zip.js';
 
 async function put(root: string, rel: string, content: string | Buffer = ''): Promise<void> {
   const p = join(root, ...rel.split('/'));
   await mkdir(dirname(p), { recursive: true });
   await writeFile(p, content);
+}
+
+/** A minimal `.efkefc`: header, an `INFO` chunk listing `lists` of dependency paths, a dummy `EDIT` chunk. */
+function efkefc(...lists: string[][]): Buffer {
+  const i32 = (n: number) => {
+    const b = Buffer.alloc(4);
+    b.writeInt32LE(n);
+    return b;
+  };
+  const info = [i32(1500)];
+  for (const list of lists) {
+    info.push(i32(list.length));
+    for (const path of list) info.push(i32(path.length + 1), Buffer.from(`${path}\0`, 'utf16le'));
+  }
+  const infoData = Buffer.concat(info);
+  const edit = Buffer.from('opaque');
+  return Buffer.concat([
+    Buffer.from('EFKE'),
+    i32(0),
+    Buffer.from('INFO'),
+    i32(infoData.length),
+    infoData,
+    Buffer.from('EDIT'),
+    i32(edit.length),
+    edit,
+  ]);
 }
 
 /** Minimal project with used + unused assets in every prunable kind. */
@@ -52,8 +83,26 @@ async function scaffoldProject(root: string): Promise<string> {
   );
   await put(dir, 'data/Enemies.json', JSON.stringify([null, { id: 1, battlerName: 'Slime' }]));
   await put(dir, 'data/tilecatalog/World_A2.json', '{}'); // non-runtime subfolder → not copied
-  await put(dir, 'effects/Heal.efkefc', 'efk');
-  await put(dir, 'effects/Texture/Unused_Tex.png', 'tex'); // kept: effects/ is wholesale
+  await put(
+    dir,
+    'data/Animations.json',
+    JSON.stringify([
+      null,
+      { id: 1, name: 'Heal One', effectName: 'Heal' },
+      { id: 2, effectName: '' },
+    ]),
+  );
+  // Heal is referenced; it lists a texture (mis-cased, Windows separator) and a model.
+  await put(
+    dir,
+    'effects/Heal.efkefc',
+    efkefc(['Texture/Heal_Tex.png', 'Texture\\SPARK.png'], [], [], ['Model/Orb.efkmodel'], []),
+  );
+  await put(dir, 'effects/Texture/Heal_Tex.png', 'tex');
+  await put(dir, 'effects/Texture/Spark.png', 'tex');
+  await put(dir, 'effects/Model/Orb.efkmodel', 'mdl');
+  await put(dir, 'effects/Unused.efkefc', efkefc(['Texture/Unused_Tex.png']));
+  await put(dir, 'effects/Texture/Unused_Tex.png', 'tex'); // only Unused.efkefc uses it
   await put(dir, 'save/file1.rmmzsave', 'save'); // never copied
 
   await put(dir, 'img/system/Window.png', 'win');
@@ -128,11 +177,13 @@ describe('export_web (integration)', () => {
     expect(result.zipPath).toBe(`${out}.zip`);
     expect([...(result.droppedList ?? [])].sort()).toEqual([
       'audio/bgm/Theme2.ogg',
+      'effects/Texture/Unused_Tex.png',
+      'effects/Unused.efkefc',
       'img/characters/Villager.png',
       'img/enemies/Bat.png',
       'img/pictures/Unused.png',
     ]);
-    expect(result.dropped).toBe(4);
+    expect(result.dropped).toBe(6);
     expect(result.warnings).toBeUndefined();
 
     const zip = readZip(await readFile(result.zipPath!));
@@ -151,7 +202,9 @@ describe('export_web (integration)', () => {
       'fonts/mplus-1m-regular.woff',
       'icon/icon.png',
       'effects/Heal.efkefc',
-      'effects/Texture/Unused_Tex.png',
+      'effects/Texture/Heal_Tex.png', // dependency listed inside Heal.efkefc
+      'effects/Texture/Spark.png', // matched case-insensitively, copied by real name
+      'effects/Model/Orb.efkmodel',
       'img/system/Window.png',
       'img/system/Unreferenced.png',
       'img/characters/!$Hero.png',
@@ -190,8 +243,37 @@ describe('export_web (integration)', () => {
     expect(result.dropped).toBe(0);
     expect(result.droppedList).toBeUndefined();
     expect(result.zipPath).toBeUndefined();
-    expect(result.kept).toBe(19); // every img + audio file
+    expect(result.kept).toBe(25); // every img + audio + effects file
     await expect(readFile(`${out}.zip`)).rejects.toThrow();
+  });
+
+  it('keeps every effects/ dependency when a kept effect cannot be parsed', async () => {
+    await put(dir, 'effects/Heal.efkefc', 'not an effekseer file');
+    const result = await exportWeb(dir, { outDir: join(root, 'fallback'), zip: false });
+    expect(await readdir(join(root, 'fallback', 'effects', 'Texture'))).toEqual(
+      expect.arrayContaining(['Heal_Tex.png', 'Spark.png', 'Unused_Tex.png']),
+    );
+    expect(result.droppedList).toContain('effects/Unused.efkefc');
+    expect(result.droppedList).not.toContain('effects/Texture/Unused_Tex.png');
+  });
+
+  it('copies no effects/ when no effect is referenced', async () => {
+    await put(dir, 'data/Animations.json', JSON.stringify([null, { id: 1, effectName: '' }]));
+    const result = await exportWeb(dir, { outDir: join(root, 'noeffects'), zip: false });
+    expect(await readdir(join(root, 'noeffects'))).not.toContain('effects');
+    expect(result.droppedList?.filter((p) => p.startsWith('effects/')).length).toBe(6);
+  });
+
+  it('parseEffekseerDependencies reads the INFO lists and rejects malformed files', () => {
+    expect(parseEffekseerDependencies(efkefc(['Texture/A.png'], [], ['Model/B.efkmodel']))).toEqual(
+      ['Texture/A.png', 'Model/B.efkmodel'],
+    );
+    expect(parseEffekseerDependencies(Buffer.from('EFKE\0\0\0\0'))).toEqual([]);
+    expect(parseEffekseerDependencies(Buffer.from('not effekseer'))).toBeUndefined();
+    const truncated = efkefc(['Texture/A.png']);
+    expect(
+      parseEffekseerDependencies(truncated.subarray(0, truncated.length - 20)),
+    ).toBeUndefined();
   });
 
   it('re-exports over a previous export but refuses a foreign non-empty folder', async () => {

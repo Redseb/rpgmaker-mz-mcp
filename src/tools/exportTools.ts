@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { copyFile, mkdir, readFile, readdir, rm, stat, writeFile } from 'fs/promises';
-import { dirname, isAbsolute, join, relative, resolve } from 'path';
+import { dirname, isAbsolute, join, posix, relative, resolve } from 'path';
 import { fileExists } from '../utils/fileHandler.js';
 import { writeZip } from '../utils/zip.js';
 import { ToolDefinition } from '../registry.js';
@@ -10,9 +10,9 @@ import { ToolDefinition } from '../registry.js';
  * and any static host expect: `index.html` at the root) and optionally zip it.
  *
  * **What is copied.** Runtime pieces wholesale — `index.html`, `js/`, `css/`,
- * `fonts/`, `icon/`, `effects/` — plus every `data/*.json`. Asset folders
- * (`img/`, `audio/`, `movies/`) are copied in full when `prune` is off; when it's
- * on, a file is kept only if its basename (extension stripped) is referenced
+ * `fonts/`, `icon/` — plus every `data/*.json`. Asset folders (`img/`, `audio/`,
+ * `movies/`, `effects/`) are copied in full when `prune` is off; when it's on, a
+ * file is kept only if its basename (extension stripped) is referenced
  * somewhere, except `img/system/` which is always kept (the engine loads it by
  * hard-coded names).
  *
@@ -25,17 +25,22 @@ import { ToolDefinition } from '../registry.js';
  * contributes its path-basename, its delimiter-split tokens (so a notetag like
  * `<Portrait: Hero>` keeps `Hero`), and extension-stripped forms of all of those.
  *
- * **Why `effects/` is kept whole:** an Effekseer `.efkefc` references its
- * textures/models from *inside* the binary effect file, so name-based pruning
- * would silently break animations. It's usually small relative to img/audio.
+ * **`effects/`:** an `.efkefc` is kept when its name (an animation's `effectName`)
+ * is referenced like any other asset. Its textures/models/sounds aren't named
+ * anywhere in the data — they're listed inside the binary effect file — so they
+ * are kept by parsing each kept effect's dependency list (see
+ * {@link parseEffekseerDependencies}). If a kept effect can't be parsed (or pulls
+ * in a material, which can reference further files), every non-`.efkefc` file
+ * under `effects/` is kept instead. No referenced effect → no `effects/` at all
+ * (the engine only fetches `effects/<name>.efkefc` on demand).
  */
 
 /** Copied wholesale (no pruning). */
-const WHOLESALE_DIRS = ['js', 'css', 'fonts', 'icon', 'effects'] as const;
+const WHOLESALE_DIRS = ['js', 'css', 'fonts', 'icon'] as const;
 /** Pruned by referenced basename (except `img/system`). */
 const PRUNABLE_DIRS = ['img', 'audio', 'movies'] as const;
 /** Everything the export reads from — `outDir` may not live inside any of these. */
-const SOURCE_DIRS = [...WHOLESALE_DIRS, ...PRUNABLE_DIRS, 'data', 'save'];
+const SOURCE_DIRS = [...WHOLESALE_DIRS, ...PRUNABLE_DIRS, 'effects', 'data', 'save'];
 
 /** Marker written into the export folder (never zipped) so a re-export may safely wipe it. */
 const EXPORT_MARKER = '.rpgmaker-mcp-export';
@@ -60,7 +65,7 @@ export interface ExportWebResult {
   files: number;
   /** Total uncompressed bytes of those files. */
   bytes: number;
-  /** Asset files (img/audio/movies) kept. */
+  /** Asset files (img/audio/movies/effects) kept. */
   kept: number;
   /** Asset files dropped as unreferenced. */
   dropped: number;
@@ -190,6 +195,98 @@ function isReferenced(rel: string, refs: Set<string>): boolean {
   return inKind.length > 0 && (refs.has(inKind) || refs.has(stripExt(inKind)));
 }
 
+/**
+ * Dependency paths (relative to the effect file, e.g. `Texture/Spin.png`) listed in
+ * an Effekseer `.efkefc`'s `INFO` chunk, or `undefined` if the file doesn't parse.
+ *
+ * Layout: `"EFKE"` + u32 version, then chunks of fourcc + u32 size + data. `INFO`
+ * data is an i32 version followed by lists (color/normal/distortion textures,
+ * models, sounds, materials, … — more in newer versions), each an i32 count of
+ * i32 length (UTF-16 code units, incl. the NUL) + UTF-16LE string. Every list is
+ * read the same way, so the exact set of lists doesn't matter; the parse must
+ * consume the chunk exactly or it's rejected. No `INFO` chunk → no dependencies.
+ */
+export function parseEffekseerDependencies(buf: Buffer): string[] | undefined {
+  if (buf.length < 8 || buf.toString('latin1', 0, 4) !== 'EFKE') return undefined;
+  let o = 8;
+  while (o + 8 <= buf.length) {
+    const tag = buf.toString('latin1', o, o + 4);
+    const size = buf.readUInt32LE(o + 4);
+    const start = o + 8;
+    const end = start + size;
+    if (end > buf.length) return undefined;
+    if (tag === 'INFO') {
+      const deps: string[] = [];
+      let p = start + 4;
+      if (p > end) return undefined;
+      while (p + 4 <= end) {
+        const count = buf.readInt32LE(p);
+        p += 4;
+        if (count < 0 || count > 65536) return undefined;
+        for (let i = 0; i < count; i++) {
+          if (p + 4 > end) return undefined;
+          const len = buf.readInt32LE(p);
+          p += 4;
+          if (len <= 0 || p + len * 2 > end) return undefined;
+          const s = buf.toString('utf16le', p, p + len * 2);
+          p += len * 2;
+          if (!s.endsWith('\0')) return undefined;
+          if (s.length > 1) deps.push(s.slice(0, -1));
+        }
+      }
+      return p === end ? deps : undefined;
+    }
+    o = end;
+  }
+  return o === buf.length ? [] : undefined;
+}
+
+/**
+ * Split `effects/` files into kept/dropped: referenced `.efkefc`s plus their
+ * dependencies (or every non-effect file, if a kept effect can't be parsed).
+ */
+async function pruneEffects(
+  projectPath: string,
+  refs: Set<string>,
+): Promise<{ kept: string[]; dropped: string[] }> {
+  const all = await walk(projectPath, 'effects');
+  // Dependency paths are matched case-insensitively (authored on Windows), then copied by real name.
+  const byLower = new Map(all.map((rel) => [rel.toLowerCase(), rel]));
+  const keep = new Set<string>();
+  let keepAllDeps = false;
+  for (const rel of all) {
+    if (!rel.endsWith('.efkefc')) continue;
+    const name = stripExt(rel.slice('effects/'.length));
+    const base = name.split('/').pop()!;
+    if (!refs.has(name) && !refs.has(base)) continue;
+    keep.add(rel);
+    let deps: string[] | undefined;
+    try {
+      deps = parseEffekseerDependencies(await readFile(join(projectPath, ...rel.split('/'))));
+    } catch {
+      deps = undefined;
+    }
+    if (!deps || deps.some((d) => /\.efkmat$/i.test(d))) {
+      keepAllDeps = true;
+      continue;
+    }
+    const dir = posix.dirname(rel);
+    for (const d of deps) {
+      const dep = byLower.get(
+        posix.normalize(posix.join(dir, d.replace(/\\/g, '/'))).toLowerCase(),
+      );
+      if (dep) keep.add(dep);
+    }
+  }
+  if (keepAllDeps && keep.size > 0) {
+    for (const rel of all) if (!rel.endsWith('.efkefc')) keep.add(rel);
+  }
+  return {
+    kept: all.filter((rel) => keep.has(rel)),
+    dropped: all.filter((rel) => !keep.has(rel)),
+  };
+}
+
 /** `child` is `parent` or lives beneath it. */
 function isWithin(child: string, parent: string): boolean {
   const r = relative(parent, child);
@@ -292,6 +389,16 @@ export async function exportWeb(
       }
     }
   }
+  if (refs) {
+    const effects = await pruneEffects(projectPath, refs);
+    files.push(...effects.kept);
+    kept += effects.kept.length;
+    droppedPaths.push(...effects.dropped);
+  } else {
+    const effects = await walk(projectPath, 'effects');
+    files.push(...effects);
+    kept += effects.length;
+  }
 
   await prepareOutDir(outAbs);
   let bytes = 0;
@@ -345,7 +452,7 @@ export const exportToolDefinitions: ToolDefinition[] = [
   {
     name: 'export_web',
     description:
-      "Export a pruned HTML5 web deployment (for itch.io or any static host): copies index.html, js/, css/, fonts/, icon/, effects/ and data/*.json, plus only the img/audio/movies files the game references (every string in data/*.json, string literals in the core js and plugins, plugin @default annotations; img/system is always kept). Writes the folder to outDir and, by default, <outDir>.zip with index.html at the archive root. Returns file/byte counts, kept/dropped asset counts (+ dropped paths), the screen size from System.advanced (the itch embed size), and warnings for itch's 1000-file / 200 MB-per-file limits. Writes nothing inside the project; outDir must be outside the project's copied folders, and an existing non-empty outDir is only replaced if it was a previous export_web output. Follow up with a playtest of the exported build.",
+      "Export a pruned HTML5 web deployment (for itch.io or any static host): copies index.html, js/, css/, fonts/, icon/ and data/*.json, plus only the img/audio/movies files the game references (every string in data/*.json, string literals in the core js and plugins, plugin @default annotations; img/system is always kept) and only the effects/*.efkefc Effekseer effects referenced (e.g. an animation's effectName) together with the textures/models they list internally. Writes the folder to outDir and, by default, <outDir>.zip with index.html at the archive root. Returns file/byte counts, kept/dropped asset counts (+ dropped paths), the screen size from System.advanced (the itch embed size), and warnings for itch's 1000-file / 200 MB-per-file limits. Writes nothing inside the project; outDir must be outside the project's copied folders, and an existing non-empty outDir is only replaced if it was a previous export_web output. Follow up with a playtest of the exported build.",
     inputSchema: {
       outDir: z
         .string()
@@ -360,7 +467,7 @@ export const exportToolDefinitions: ToolDefinition[] = [
         .boolean()
         .optional()
         .describe(
-          'Drop img/audio/movies files nothing references (default true). Set false to copy every asset — the escape hatch if a plugin builds asset names at runtime.',
+          'Drop img/audio/movies/effects files nothing references (default true). Set false to copy every asset — the escape hatch if a plugin builds asset names at runtime.',
         ),
     },
     handler: (ctx, args) =>
