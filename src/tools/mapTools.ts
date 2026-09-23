@@ -35,7 +35,8 @@ const DEFAULT_MAP_HEIGHT = 13;
  *
  * Reachability is folded in here rather than checked by the caller afterwards
  * because it, too, is block-worthy — an action-button page that can never fire
- * is a dead event, not a style note.
+ * is a dead event, not a style note. The advisory invisible-wall check rides
+ * along on the same passability lookup.
  */
 export function eventWriteGate(
   projectPath: string,
@@ -46,7 +47,7 @@ export function eventWriteGate(
   return writeGate<MapEvent>(force, `event on map ${mapId}`, async (event) => [
     ...extra,
     ...validateEvent(event).warnings,
-    ...(await actionButtonReachabilityWarnings(projectPath, mapId, event)),
+    ...(await eventPassabilityWarnings(projectPath, mapId, event)),
   ]);
 }
 
@@ -75,6 +76,45 @@ export function summarizeCreatedEvent(event: MapEvent): {
 }
 
 /**
+ * Whether a map cell is walkable — any of its four directions passable, per the
+ * engine's layered `checkPassage` over the cell's stacked tile flags.
+ */
+export type CellWalkable = (x: number, y: number) => boolean;
+
+/**
+ * Build a {@link CellWalkable} lookup for a map from its tileset flags, or
+ * `null` when that can't be answered (no tileset, a bare fixture, an unreadable
+ * `Tilesets.json`). Every passability-based event check fails soft on `null` —
+ * an unanswerable check must never block or warn.
+ */
+export async function loadCellWalkable(
+  projectPath: string,
+  map: MapData,
+): Promise<CellWalkable | null> {
+  let tileset: Tileset | null | undefined;
+  try {
+    const tilesets = await readJsonFile<(Tileset | null)[]>(
+      getDataPath(projectPath, 'Tilesets.json'),
+    );
+    tileset = tilesets.find((t) => t && t.id === map.tilesetId);
+  } catch {
+    return null;
+  }
+  if (!tileset || !Array.isArray(tileset.flags) || !Array.isArray(map.data)) return null;
+  const flags = tileset.flags;
+  return (x, y) => {
+    if (x < 0 || y < 0 || x >= map.width || y >= map.height) return false;
+    const stackFlags: number[] = [];
+    for (let z = 3; z >= 0; z--) {
+      const tileId = map.data[tileIndex(map.width, map.height, x, y, z)] || 0;
+      stackFlags.push(flags[tileId] ?? 0);
+    }
+    const passable = layeredPassability(stackFlags);
+    return passable.down || passable.left || passable.right || passable.up;
+  };
+}
+
+/**
  * Flag an event with an action-button page drawn with priority "below
  * characters" (0) while the event's tile is impassable. Such a page fires only
  * when the player STANDS ON the tile — impossible on a blocked cell — so the
@@ -83,43 +123,114 @@ export function summarizeCreatedEvent(event: MapEvent): {
  * what these events want.
  *
  * Structural (`severity: 'error'`): the event is dead on arrival, which is
- * essentially never intended, so the write is refused unless forced. Still fails
- * soft on any *read* problem (e.g. a bare fixture with no tileset) — an
- * unanswerable check must never block.
+ * essentially never intended, so the write is refused unless forced. Pure; the
+ * caller supplies whether the event's cell is walkable.
  */
-export async function actionButtonReachabilityWarnings(
-  projectPath: string,
-  mapId: number,
+export function actionButtonReachabilityFindings(
   event: MapEvent,
-): Promise<ValidationWarning[]> {
+  walkable: boolean,
+): ValidationWarning[] {
+  if (walkable) return [];
   const affected = (event.pages ?? []).some(
     (p) => p && p.trigger === 0 && p.priorityType === 0 && (p.list?.length ?? 0) > 1,
   );
   if (!affected) return [];
-  try {
-    const map = await getMap(projectPath, mapId);
-    const tilesets = await readJsonFile<(Tileset | null)[]>(
-      getDataPath(projectPath, 'Tilesets.json'),
-    );
-    const tileset = tilesets.find((t) => t && t.id === map.tilesetId);
-    if (!tileset) return [];
-    const stackFlags: number[] = [];
-    for (let z = 3; z >= 0; z--) {
-      const tileId = map.data[tileIndex(map.width, map.height, event.x, event.y, z)] || 0;
-      stackFlags.push(tileset.flags[tileId] ?? 0);
-    }
-    const passable = layeredPassability(stackFlags);
-    if (passable.down || passable.left || passable.right || passable.up) return [];
-  } catch {
-    return [];
-  }
   return [
     {
-      path: 'pages',
+      path: `event ${event.id} / pages`,
       severity: 'error',
       message: `action-button page with priority "below characters" sits on an impassable tile (${event.x}, ${event.y}) — it only fires when the player stands on it, which is impossible there, so it can never trigger; use priorityType 1 (same as characters) so it fires from facing (doors, entrances, signs)`,
     },
   ];
+}
+
+/** True when a page has no activation condition at all (it is always eligible). */
+function isUnconditionalPage(page: EventPage): boolean {
+  const c = page.conditions;
+  if (!c) return true;
+  return !(
+    c.actorValid ||
+    c.itemValid ||
+    c.selfSwitchValid ||
+    c.switch1Valid ||
+    c.switch2Valid ||
+    c.variableValid
+  );
+}
+
+/**
+ * Flag every page of an event that is an *invisible wall*: no graphic
+ * (`characterName` empty and `tileId` 0), priority "same as characters" (1) and
+ * `through` off, while the event sits on a walkable tile. The engine still
+ * treats such a page as a solid character, so the player bumps into nothing —
+ * the classic way this ships is a cutscene NPC's blanked "after" page parked on
+ * a doorway, sealing the map.
+ *
+ * Only *reachable* pages count: the engine runs the highest-numbered page whose
+ * conditions hold, so a page followed by any unconditional page can never be
+ * active and is skipped. Advisory (`severity: 'warning'`) — an invisible
+ * blocker can be deliberate ("you can't leave yet"), so this never refuses a
+ * write. Pure; the caller supplies whether the event's cell is walkable.
+ */
+export function invisibleWallFindings(event: MapEvent, walkable: boolean): ValidationWarning[] {
+  if (!walkable || !Array.isArray(event.pages)) return [];
+  const pages = event.pages;
+  const warnings: ValidationWarning[] = [];
+  pages.forEach((page, i) => {
+    if (!page) return;
+    const image = page.image;
+    const hasGraphic = !!image && (!!image.characterName || (image.tileId ?? 0) !== 0);
+    if (hasGraphic || page.priorityType !== 1 || page.through) return;
+    if (pages.slice(i + 1).some((later) => later && isUnconditionalPage(later))) return;
+    warnings.push({
+      path: `event ${event.id} / page ${i}`,
+      severity: 'warning',
+      message: `event ${event.id} "${event.name}" page ${i + 1} (index ${i}) is an invisible wall at (${event.x}, ${event.y}): no graphic, priority "same", on a walkable tile — use priority "below" (priorityType 0) or through: true if it should be walked past`,
+    });
+  });
+  return warnings;
+}
+
+/**
+ * Every passability-based finding for one event — action-button reachability
+ * (blocking) + invisible wall (advisory) — given a map's walkability lookup. A
+ * `null` lookup yields nothing (fail soft). Shared by the write gate and the
+ * read-only `validate_event`/`validate_project` audits.
+ */
+export function eventPassabilityFindings(
+  event: MapEvent,
+  walkable: CellWalkable | null,
+): ValidationWarning[] {
+  if (!walkable || !event) return [];
+  const onWalkable = walkable(event.x, event.y);
+  return [
+    ...actionButtonReachabilityFindings(event, onWalkable),
+    ...invisibleWallFindings(event, onWalkable),
+  ];
+}
+
+/**
+ * {@link eventPassabilityFindings} for an event about to be written, resolving
+ * its cell's walkability from the map + tileset. Fails soft on any *read*
+ * problem (e.g. a bare fixture with no tileset) — an unanswerable check must
+ * never block.
+ */
+export async function eventPassabilityWarnings(
+  projectPath: string,
+  mapId: number,
+  event: MapEvent,
+): Promise<ValidationWarning[]> {
+  // Skip the map + tileset read when no page could trip either check.
+  const candidate =
+    eventPassabilityFindings(event, () => true).length > 0 ||
+    eventPassabilityFindings(event, () => false).length > 0;
+  if (!candidate) return [];
+  try {
+    const walkable = await loadCellWalkable(projectPath, await getMap(projectPath, mapId));
+    return eventPassabilityFindings(event, walkable);
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -1214,7 +1325,7 @@ export const mapToolDefinitions: ToolDefinition[] = [
     mutates: true,
     forceable: true,
     description:
-      'Create a new event on a map. Each page is merged onto a blank "New Event" page (trigger 0 action-button, priority 0 below characters, no graphic, empty command list, standing move type), so you only supply the fields that differ — pass e.g. `{ image: { characterName: \'Actor1\', characterIndex: 0 }, trigger: 3, list: [...] }` and the rest is filled in. Nested `image`/`conditions` deep-merge; an omitted `list` becomes a valid empty (code-0-terminated) list. Omit `pages` entirely for a bare one-page event. For the common "talking NPC" case prefer create_npc. An action-button page meant to fire from facing (doors, entrances, signs) needs `priorityType: 1` — with the default 0 (below) it only fires when stood on, so on an impassable tile it can never trigger (this is refused, not written; pass force: true to override). A structurally invalid command list is refused the same way. Page fields: `image` { characterName, characterIndex, direction (2 down/4 left/6 right/8 up), pattern, tileId }, `trigger` (0 action-button/1 player-touch/2 event-touch/3 autorun/4 parallel), `priorityType` (0 below/1 same/2 above), `moveType` (0 fixed/1 random/2 approach/3 custom), `conditions`, `list`.',
+      'Create a new event on a map. Each page is merged onto a blank "New Event" page (trigger 0 action-button, priority 0 below characters, no graphic, empty command list, standing move type), so you only supply the fields that differ — pass e.g. `{ image: { characterName: \'Actor1\', characterIndex: 0 }, trigger: 3, list: [...] }` and the rest is filled in. Nested `image`/`conditions` deep-merge; an omitted `list` becomes a valid empty (code-0-terminated) list. Omit `pages` entirely for a bare one-page event. For the common "talking NPC" case prefer create_npc. An action-button page meant to fire from facing (doors, entrances, signs) needs `priorityType: 1` — with the default 0 (below) it only fires when stood on, so on an impassable tile it can never trigger (this is refused, not written; pass force: true to override). A structurally invalid command list is refused the same way. A page with no graphic, priority 1 and through off on a walkable tile is an invisible wall — warned (not refused); give it priority 0 or through: true if it should be walked past. Page fields: `image` { characterName, characterIndex, direction (2 down/4 left/6 right/8 up), pattern, tileId }, `trigger` (0 action-button/1 player-touch/2 event-touch/3 autorun/4 parallel), `priorityType` (0 below/1 same/2 above), `moveType` (0 fixed/1 random/2 approach/3 custom), `conditions`, `list`.',
     inputSchema: {
       mapId: z.number().int().positive().describe('The ID of the map'),
       name: z.string().describe('Event name'),

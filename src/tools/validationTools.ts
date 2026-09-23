@@ -1,6 +1,12 @@
 import { z } from 'zod';
 import { ToolDefinition } from '../registry.js';
-import { getMap, getMapInfos, getMapEvent } from './mapTools.js';
+import {
+  getMap,
+  getMapInfos,
+  getMapEvent,
+  loadCellWalkable,
+  eventPassabilityFindings,
+} from './mapTools.js';
 import { validateEvent, validateEvents, ValidationWarning } from '../validation/eventCommands.js';
 import { readJsonFile, readJsonArraySoft, getDataPath } from '../utils/fileHandler.js';
 import { checkReferences, ProjectData, ReferenceWarning } from '../validation/references.js';
@@ -35,8 +41,12 @@ export async function validateEventTool(
   if (!event) {
     throw new Error(`Event ${eventId} not found on map ${mapId}`);
   }
-  const report = validateEvent(event);
-  return { mapId, eventId, ...report };
+  const map = await getMap(projectPath, mapId);
+  const warnings = [
+    ...validateEvent(event).warnings,
+    ...eventPassabilityFindings(event, await loadCellWalkable(projectPath, map)),
+  ];
+  return { mapId, eventId, ok: warnings.length === 0, warnings };
 }
 
 /**
@@ -66,6 +76,13 @@ export async function validateProjectTool(projectPath: string): Promise<{
     const report = validateEvents(map.events);
     for (const warning of report.warnings) {
       warnings.push({ mapId, ...warning });
+    }
+    const walkable = await loadCellWalkable(projectPath, map);
+    for (const event of map.events ?? []) {
+      if (!event) continue;
+      for (const warning of eventPassabilityFindings(event, walkable)) {
+        warnings.push({ mapId, ...warning });
+      }
     }
   }
 
@@ -246,7 +263,7 @@ export const validationToolDefinitions: ToolDefinition[] = [
   {
     name: 'validate_event',
     description:
-      "Validate a single event's command lists against the known RPG Maker MZ command table. Read-only: reports parameter/structure warnings without changing anything.",
+      "Validate a single event's command lists against the known RPG Maker MZ command table, plus its placement against the tile it sits on: an action-button page with priority below on an impassable tile (can never trigger) and an invisible wall (a graphic-less, priority-same, non-through page on a walkable tile — the player bumps into nothing). Read-only: reports warnings without changing anything.",
     inputSchema: {
       mapId: z.number().int().positive().describe('The ID of the map'),
       eventId: z.number().int().positive().describe('The ID of the event to validate'),
@@ -256,7 +273,7 @@ export const validationToolDefinitions: ToolDefinition[] = [
   {
     name: 'validate_project',
     description:
-      'Validate the event command lists of every map in the project. Read-only: returns aggregated, map-tagged warnings for auditing before or after a batch of edits.',
+      "Validate the event command lists of every map in the project, plus each event's placement (action-button-below on an impassable tile; graphic-less priority-same invisible walls on walkable tiles). Read-only: returns aggregated, map-tagged warnings for auditing before or after a batch of edits.",
     inputSchema: {},
     handler: (ctx) => validateProjectTool(ctx.projectPath),
   },
