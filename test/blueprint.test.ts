@@ -196,8 +196,18 @@ describe('resolveTileName', () => {
   });
 });
 
-/** Scaffold a project whose tileset uses World_A2 (named) with SOLID impassable. */
-async function scaffold(width: number, height: number): Promise<string> {
+/**
+ * Passage bits (low nibble) of A4 wall-top shapes 0-47 exactly as the RMMZ
+ * editor sets them in a stock Tilesets.json: only outer edges block, never the
+ * bottom edge (the face below does that), and an interior top (shape 0) is open.
+ */
+const REAL_WALL_TOP_BITS = '0000000000000000222288884444000068aacc4422ea6cef';
+
+/**
+ * Scaffold a project whose tileset uses World_A2 (named) with SOLID impassable.
+ * Wall tops are fully blocked unless `realWallTops` gives them the editor's edge flags.
+ */
+async function scaffold(width: number, height: number, realWallTops = false): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'rpgmz-blueprint-'));
   await writeFile(join(dir, 'game.rmmzproject'), 'RPGMZ 1.0.0');
   await mkdir(join(dir, 'data'));
@@ -207,7 +217,7 @@ async function scaffold(width: number, height: number): Promise<string> {
   flags[0] = 0x10;
   flags[SOLID] = 0x0f;
   for (let s = 0; s < 48; s++) {
-    flags[WALL_TOP + s] = 0x0f;
+    flags[WALL_TOP + s] = realWallTops ? parseInt(REAL_WALL_TOP_BITS[s], 16) : 0x0f;
     flags[WALL_SIDE + s] = 0x0f;
   }
   const tileset = {
@@ -273,6 +283,48 @@ describe('paint_blueprint (integration)', () => {
     expect(getAutotileKind(at(0, 2, 2))).toBe(16); // grass
     expect(at(2, 3, 2)).toBe(SOLID);
     expect(at(0, 0, 0)).toBe(0); // outside the blueprint
+  });
+
+  it('marks a whole A4 wall mass impassable with real edge-only wall-top flags', async () => {
+    const real = await scaffold(9, 7, true);
+    try {
+      const res = (await paintBlueprint.handler(
+        { projectPath: real },
+        {
+          mapId: 1,
+          rows: [
+            'WWWWWWWWW',
+            'WWWWWWWWW',
+            'WW.....WW',
+            'WW.....WW',
+            'WW.....WW',
+            'WWWWWWWWW',
+            'WWWWWWWWW',
+          ],
+          legend: { W: { wall: { top: WALL_TOP } }, '.': 'Grassland A' },
+        },
+      )) as BlueprintResult;
+      expect(res.passability?.rows).toEqual([
+        '#########',
+        '#########',
+        '##.....##',
+        '##.....##',
+        '##.....##',
+        '#########',
+        '#########',
+      ]);
+      expect(res.passability?.impassableCount).toBe(63 - 15);
+
+      // The fixture really exercises edge flags: the corner top is open inward,
+      // and the top beside the floor only blocks its floor-facing edge.
+      const map = await getMap(real, 1);
+      const shapeAt = (x: number, y: number) =>
+        getAutotileShape(map.data[tileIndex(map.width, map.height, x, y, 0)]);
+      expect(REAL_WALL_TOP_BITS[shapeAt(0, 3)]).not.toBe('f');
+      expect(parseInt(REAL_WALL_TOP_BITS[shapeAt(1, 3)], 16) & 0x04).toBe(0x04); // right blocked
+    } finally {
+      await rm(real, { recursive: true, force: true });
+    }
   });
 
   it('validates everything before writing', async () => {

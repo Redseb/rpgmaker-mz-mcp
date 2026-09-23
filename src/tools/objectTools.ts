@@ -55,6 +55,87 @@ export function isBlocked(p: Passability): boolean {
   return !p.down && !p.left && !p.right && !p.up;
 }
 
+/** Step per direction, and the direction pointing back (engine `reverseDir`). */
+const STEPS: { dir: keyof Passability; dx: number; dy: number; back: keyof Passability }[] = [
+  { dir: 'down', dx: 0, dy: 1, back: 'up' },
+  { dir: 'left', dx: -1, dy: 0, back: 'right' },
+  { dir: 'right', dx: 1, dy: 0, back: 'left' },
+  { dir: 'up', dx: 0, dy: -1, back: 'down' },
+];
+
+/**
+ * Whole-map "can the player stand here" mask (index `y * width + x`, true =
+ * impassable), mirroring `Game_CharacterBase.canPass`: a step from a to its
+ * neighbour b needs `isPassable(a, d) && isPassable(b, reverseDir(d))`.
+ *
+ * Per-cell `isBlocked` is not enough for edge-flagged terrain: RMMZ flags an A4
+ * wall top only on its outer edges (an interior top is fully open), so a wall
+ * mass is walkable *within* itself but can't be entered from the floor. So:
+ *  1. cells with no walkable direction (faces, water, solid objects) are impassable;
+ *  2. the rest split into regions joined by open steps; a region is impassable
+ *     when it borders at least one walkable cell of another region and every such
+ *     border is closed by the region's *own* edge flags (it refuses entry — a
+ *     wall-top mass, a stair-less plateau). Ground closed off by someone else's
+ *     flags (a room floor ringed by wall tops/faces) stays walkable.
+ * Map edges don't count as borders (nothing enters from off-map). A region that
+ * only touches fully-blocked cells and map edges can't be told apart from a
+ * sealed room by flags alone, so it stays walkable.
+ */
+export function impassableMask(map: MapData, tileset: Tileset): boolean[] {
+  const { width, height } = map;
+  const pass: Passability[] = [];
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) pass.push(cellPassability(map, tileset, x, y).passable);
+  }
+  const blocked = pass.map(isBlocked);
+
+  // Label regions of non-blocked cells joined by steps the engine allows.
+  const region = new Array<number>(width * height).fill(-1);
+  const regionCells: number[][] = [];
+  for (let start = 0; start < region.length; start++) {
+    if (blocked[start] || region[start] !== -1) continue;
+    const id = regionCells.length;
+    const cells = [start];
+    region[start] = id;
+    for (let i = 0; i < cells.length; i++) {
+      const a = cells[i];
+      const ax = a % width;
+      const ay = Math.floor(a / width);
+      for (const { dir, dx, dy, back } of STEPS) {
+        const bx = ax + dx;
+        const by = ay + dy;
+        if (bx < 0 || by < 0 || bx >= width || by >= height) continue;
+        const b = by * width + bx;
+        if (blocked[b] || region[b] !== -1 || !pass[a][dir] || !pass[b][back]) continue;
+        region[b] = id;
+        cells.push(b);
+      }
+    }
+    regionCells.push(cells);
+  }
+
+  const mask = blocked.slice();
+  for (const cells of regionCells) {
+    let borders = false;
+    let selfSealed = true;
+    for (const a of cells) {
+      const ax = a % width;
+      const ay = Math.floor(a / width);
+      for (const { dir, dx, dy } of STEPS) {
+        const bx = ax + dx;
+        const by = ay + dy;
+        if (bx < 0 || by < 0 || bx >= width || by >= height) continue;
+        const b = by * width + bx;
+        if (blocked[b] || region[b] === region[a]) continue;
+        borders = true;
+        if (pass[a][dir]) selfSealed = false; // closed by the neighbour, not by us
+      }
+    }
+    if (borders && selfSealed) for (const a of cells) mask[a] = true;
+  }
+  return mask;
+}
+
 /** Per-cell report of what the object did at one footprint cell. */
 interface FootprintCell {
   x: number;

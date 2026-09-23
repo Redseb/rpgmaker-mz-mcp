@@ -9,7 +9,7 @@ import { isAutotile } from '../tiles/tileCodec.js';
 import { getTileset } from './tilesetTools.js';
 import { baseAwareTransparencyWarning } from './tileTransparency.js';
 import { loadCatalogOverlay } from './catalogTools.js';
-import { cellPassability, isBlocked } from './objectTools.js';
+import { impassableMask } from './objectTools.js';
 import { CatalogOverlay, resolveTileName } from '../tiles/catalog/index.js';
 import {
   ResolvedEntry,
@@ -135,9 +135,13 @@ interface BlueprintResult {
   cleared: number;
   wallFaces: number;
   passability?: {
-    /** Cells with no walkable direction. */
+    /** Cells the player can't stand on (see `impassableMask`). */
     impassableCount: number;
-    /** One string per blueprint row: `#` = impassable, `.` = walkable in at least one direction. */
+    /**
+     * One string per blueprint row: `#` = impassable (no walkable direction, or
+     * part of a region whose own edge flags refuse entry, e.g. an A4 wall-top
+     * mass), `.` = walkable.
+     */
     rows: string[];
     /** Impassable cells as [x, y] map coordinates (capped). */
     impassable: [number, number][];
@@ -284,13 +288,14 @@ async function paintBlueprint(
     );
     if (warning) warnings.push(warning);
 
+    const mask = impassableMask(map, ts);
     const passRows: string[] = [];
     const impassable: [number, number][] = [];
     let impassableCount = 0;
     for (let dy = 0; dy < height; dy++) {
       let line = '';
       for (let dx = 0; dx < width; dx++) {
-        const blocked = isBlocked(cellPassability(map, ts, ox + dx, oy + dy).passable);
+        const blocked = mask[(oy + dy) * map.width + ox + dx];
         line += blocked ? '#' : '.';
         if (blocked) {
           impassableCount++;
@@ -405,7 +410,7 @@ export const paintToolDefinitions: ToolDefinition[] = [
     name: 'paint_blueprint',
     mutates: true,
     description:
-      "Paint a whole map area from an ASCII blueprint in ONE call and one write. `rows` are equal-length strings (one glyph per cell); `legend` maps each glyph to what that cell holds: `[[layer, tile], ...]` pairs (multi-layer cells, e.g. ground on 0 + fence on 1); a bare string = a catalog tile name on layer 0; `{ wall: { top, side?, faceHeight?, layer? }, tiles?: [...] }` = an A4 wall (or A3 roof) — every cell gets the wall-top kind and the bottom `faceHeight` (default 1) cell(s) of each vertical run get the wall-side kind (derived as top + 8 kinds = +384 ids unless `side` is given; a run continuing off the map's bottom edge gets no face); or `null` = leave the cell untouched. Tiles may be ids or catalog names (exact name, else a unique substring — unknown/ambiguous names are an error). Row lengths, unknown glyphs, names and fit are all validated before anything is written. With `clearUpperLayers` (default true) each painted cell zeroes the tile layers (0-3) above its lowest specified layer that it does not specify, so stale objects vanish (`[]` erases the cell). Autotiling is recomputed once per layer, as in paint_tiles. Returns cells painted per layer, cleared count, wall faces made, and a passability overview of the rectangle (`rows` with `#` = impassable, plus the impassable [x, y] cells). Stamp multi-tile B/C objects afterwards with place_object.",
+      "Paint a whole map area from an ASCII blueprint in ONE call and one write. `rows` are equal-length strings (one glyph per cell); `legend` maps each glyph to what that cell holds: `[[layer, tile], ...]` pairs (multi-layer cells, e.g. ground on 0 + fence on 1); a bare string = a catalog tile name on layer 0; `{ wall: { top, side?, faceHeight?, layer? }, tiles?: [...] }` = an A4 wall (or A3 roof) — every cell gets the wall-top kind and the bottom `faceHeight` (default 1) cell(s) of each vertical run get the wall-side kind (derived as top + 8 kinds = +384 ids unless `side` is given; a run continuing off the map's bottom edge gets no face); or `null` = leave the cell untouched. Tiles may be ids or catalog names (exact name, else a unique substring — unknown/ambiguous names are an error). Row lengths, unknown glyphs, names and fit are all validated before anything is written. With `clearUpperLayers` (default true) each painted cell zeroes the tile layers (0-3) above its lowest specified layer that it does not specify, so stale objects vanish (`[]` erases the cell). Autotiling is recomputed once per layer, as in paint_tiles. Returns cells painted per layer, cleared count, wall faces made, and a passability overview of the rectangle, judged like the engine's canPass (a step needs the source to allow leaving and the target to allow entry): `rows` with `#` = impassable — a cell with no walkable direction (face, water, solid object) or part of a region whose own edge flags refuse entry from the walkable cells around it (an A4 wall-top mass, a stair-less plateau) — and `.` = walkable ground, plus the impassable [x, y] cells. Stamp multi-tile B/C objects afterwards with place_object.",
     inputSchema: {
       mapId: z.number().int().describe('The ID of the map'),
       rows: z
