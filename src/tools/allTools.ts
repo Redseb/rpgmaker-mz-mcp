@@ -25,6 +25,7 @@ import { pluginScanToolDefinitions } from './pluginScanTools.js';
 import { batchToolDefinitions } from './batchTools.js';
 import { idToolDefinitions } from './idTools.js';
 import { exportToolDefinitions } from './exportTools.js';
+import { recordToolDefinitions } from './recordTools.js';
 
 /**
  * Every tool the server exposes, gathered from the per-domain tool modules.
@@ -56,6 +57,7 @@ export const allToolDefinitions: ToolDefinition[] = [
   ...validationToolDefinitions,
   ...idToolDefinitions,
   ...batchToolDefinitions,
+  ...recordToolDefinitions,
   ...pluginScanToolDefinitions,
   ...exportToolDefinitions,
 ];

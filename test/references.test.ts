@@ -234,6 +234,88 @@ describe('checkReferences — command refs', () => {
   });
 });
 
+describe('checkReferences — record-naming commands and encounters', () => {
+  /** A common event carrying `commands`, so its list is scanned. */
+  const withCommands = (commands: unknown[], over: Partial<ProjectData>) =>
+    emptyData({
+      commonEvents: [
+        null,
+        {
+          id: 1,
+          name: 'c',
+          list: [...commands, { code: 0, indent: 0, parameters: [] }],
+          switchId: 1,
+          trigger: 0,
+        } as never,
+      ],
+      ...over,
+    });
+
+  it('flags Change Items/Weapons/Armors, Party Member, Battle, Shop, State and Skill targets', () => {
+    const one = [null, { id: 1 }] as never[];
+    const warnings = checkReferences(
+      withCommands(
+        [
+          { code: 126, indent: 0, parameters: [9, 0, 0, 1] },
+          { code: 127, indent: 0, parameters: [9, 0, 0, 1, false] },
+          { code: 128, indent: 0, parameters: [9, 0, 0, 1, false] },
+          { code: 129, indent: 0, parameters: [9, 0, false] },
+          { code: 301, indent: 0, parameters: [0, 9, false, false] },
+          { code: 302, indent: 0, parameters: [0, 9, 0, 0, false] },
+          { code: 605, indent: 0, parameters: [2, 9, 0, 0] },
+          { code: 313, indent: 0, parameters: [0, 9, 0, 9] },
+          { code: 318, indent: 0, parameters: [0, 1, 0, 9] },
+        ],
+        {
+          items: one,
+          weapons: one,
+          armors: one,
+          actors: one,
+          troops: one,
+          states: one,
+          skills: one,
+        },
+      ),
+    );
+    expect(warnings.map((w) => `${w.category}@${w.path}`)).toEqual([
+      'item@common event 1 / command 0',
+      'weapon@common event 1 / command 1',
+      'armor@common event 1 / command 2',
+      'actor@common event 1 / command 3',
+      'troop@common event 1 / command 4',
+      'item@common event 1 / command 5',
+      'armor@common event 1 / command 6',
+      'actor@common event 1 / command 7',
+      'state@common event 1 / command 7',
+      'skill@common event 1 / command 8',
+    ]);
+  });
+
+  it('skips variable designations, party-wide targets, and unloaded tables', () => {
+    const warnings = checkReferences(
+      withCommands(
+        [
+          { code: 301, indent: 0, parameters: [1, 9, false, false] },
+          { code: 313, indent: 0, parameters: [0, 0, 0, 1] },
+          { code: 126, indent: 0, parameters: [9, 0, 0, 1] },
+        ],
+        { troops: [null, { id: 1 }] as never[], states: [null, { id: 1 }] as never[] },
+      ),
+    );
+    expect(warnings).toEqual([]);
+  });
+
+  it('flags a map random encounter with a missing troop', () => {
+    const warnings = checkReferences(
+      emptyData({
+        troops: [null, { id: 1 }] as never[],
+        maps: [{ id: 2, events: [], encounterList: [{ troopId: 1 }, { troopId: 5 }] }],
+      }),
+    );
+    expect(warnings).toEqual([expect.objectContaining({ path: 'map 2 / encounterList[1]' })]);
+  });
+});
+
 describe('validate_references (integration)', () => {
   let dir: string;
   afterEach(async () => {

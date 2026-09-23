@@ -38,8 +38,15 @@ export interface ReferenceWarning {
  */
 export interface ProjectData {
   mapInfos: (MapInfo | null)[];
-  /** Only the maps that loaded, carrying just the id + events the linter needs. */
-  maps: Array<{ id: number; events: (MapEvent | null)[] }>;
+  /**
+   * Only the maps that loaded, carrying just the id + events (and, when known,
+   * the random-encounter list) the linter needs.
+   */
+  maps: Array<{
+    id: number;
+    events: (MapEvent | null)[];
+    encounterList?: Array<{ troopId: number }>;
+  }>;
   actors: (Actor | null)[];
   classes: (GameClass | null)[];
   skills: (Skill | null)[];
@@ -64,6 +71,15 @@ const EFFECT_COMMON_EVENT = 44;
 // Event command codes that carry a cross-file data-id reference.
 const CMD_TRANSFER_PLAYER = 201;
 const CMD_COMMON_EVENT = 117;
+const CMD_CHANGE_ITEMS = 126;
+const CMD_CHANGE_WEAPONS = 127;
+const CMD_CHANGE_ARMORS = 128;
+const CMD_CHANGE_PARTY_MEMBER = 129;
+const CMD_BATTLE_PROCESSING = 301;
+const CMD_SHOP_PROCESSING = 302;
+const CMD_SHOP_GOODS = 605;
+const CMD_CHANGE_STATE = 313;
+const CMD_CHANGE_SKILL = 318;
 
 /**
  * Whether `id` names a live entry in a 1-indexed RPG Maker database array (slot
@@ -334,11 +350,34 @@ function checkEnemiesAndTroops(data: ProjectData): ReferenceWarning[] {
 /**
  * Cross-file references embedded in event command lists (map events, common
  * events, troop pages): Transfer Player (201, direct designation) → an existing
- * map, and Common Event (117) → an existing common event. Variable-designated
- * transfers can't be resolved statically, so they're skipped.
+ * map, Common Event (117) → an existing common event, Change Items/Weapons/
+ * Armors (126–128) and Shop Processing goods (302/605) → the item/weapon/armor,
+ * Change Party Member (129) → an actor, Battle Processing (301, direct
+ * designation) → a troop, and Change State/Skill (313/318, fixed actor) → the
+ * actor and the state/skill. Variable-designated operands can't be resolved
+ * statically, so they're skipped.
  */
 function checkCommandRefs(data: ProjectData): ReferenceWarning[] {
   const warnings: ReferenceWarning[] = [];
+
+  /** Flag a positive numeric id that doesn't resolve (skipped when the table didn't load). */
+  const checkId = (
+    table: readonly (unknown | null)[],
+    id: unknown,
+    category: string,
+    at: string,
+    message: string,
+  ): void => {
+    if (typeof id === 'number' && id > 0 && table.length > 0 && !refExists(table, id)) {
+      warnings.push({ category, path: at, message });
+    }
+  };
+
+  const goodsTables: Array<[readonly (unknown | null)[], string]> = [
+    [data.items, 'item'],
+    [data.weapons, 'weapon'],
+    [data.armors, 'armor'],
+  ];
 
   const checkList = (list: unknown, path: string): void => {
     if (!Array.isArray(list)) return;
@@ -367,6 +406,81 @@ function checkCommandRefs(data: ProjectData): ReferenceWarning[] {
           });
         }
       }
+
+      const p = cmd.parameters;
+      switch (cmd.code) {
+        case CMD_CHANGE_ITEMS:
+        case CMD_CHANGE_WEAPONS:
+        case CMD_CHANGE_ARMORS: {
+          const [table, label] = goodsTables[cmd.code - CMD_CHANGE_ITEMS];
+          checkId(
+            table,
+            p[0],
+            label,
+            at,
+            `Change ${label}s references ${label} ${p[0]}, which does not exist`,
+          );
+          break;
+        }
+        case CMD_CHANGE_PARTY_MEMBER:
+          checkId(
+            data.actors,
+            p[0],
+            'actor',
+            at,
+            `Change Party Member references actor ${p[0]}, which does not exist`,
+          );
+          break;
+        case CMD_BATTLE_PROCESSING:
+          if (p[0] === 0) {
+            checkId(
+              data.troops,
+              p[1],
+              'troop',
+              at,
+              `Battle Processing references troop ${p[1]}, which does not exist`,
+            );
+          }
+          break;
+        case CMD_SHOP_PROCESSING:
+        case CMD_SHOP_GOODS: {
+          const goods = typeof p[0] === 'number' ? goodsTables[p[0]] : undefined;
+          if (goods) {
+            const [table, label] = goods;
+            checkId(
+              table,
+              p[1],
+              label,
+              at,
+              `Shop Processing sells ${label} ${p[1]}, which does not exist`,
+            );
+          }
+          break;
+        }
+        case CMD_CHANGE_STATE:
+        case CMD_CHANGE_SKILL: {
+          const isState = cmd.code === CMD_CHANGE_STATE;
+          const name = isState ? 'Change State' : 'Change Skill';
+          if (p[0] === 0) {
+            checkId(
+              data.actors,
+              p[1],
+              'actor',
+              at,
+              `${name} references actor ${p[1]}, which does not exist`,
+            );
+          }
+          const label = isState ? 'state' : 'skill';
+          checkId(
+            isState ? data.states : data.skills,
+            p[3],
+            label,
+            at,
+            `${name} references ${label} ${p[3]}, which does not exist`,
+          );
+          break;
+        }
+      }
     });
   };
 
@@ -391,6 +505,25 @@ function checkCommandRefs(data: ProjectData): ReferenceWarning[] {
   return warnings;
 }
 
+/** Map random encounters (`encounterList[].troopId`) → an existing troop. */
+function checkEncounters(data: ProjectData): ReferenceWarning[] {
+  const warnings: ReferenceWarning[] = [];
+  if (data.troops.length === 0) return warnings;
+  for (const map of data.maps) {
+    if (!Array.isArray(map.encounterList)) continue;
+    map.encounterList.forEach((encounter, i) => {
+      if (encounter && !refExists(data.troops, encounter.troopId)) {
+        warnings.push({
+          category: 'encounter',
+          path: `map ${map.id} / encounterList[${i}]`,
+          message: `random encounter references troop ${encounter.troopId}, which does not exist`,
+        });
+      }
+    });
+  }
+  return warnings;
+}
+
 /**
  * Run every cross-file reference check over a loaded project snapshot. Pure and
  * warn-by-default: returns an aggregated list of dangling/cyclic references,
@@ -404,5 +537,6 @@ export function checkReferences(data: ProjectData): ReferenceWarning[] {
     ...checkActorsAndClasses(data),
     ...checkEnemiesAndTroops(data),
     ...checkCommandRefs(data),
+    ...checkEncounters(data),
   ];
 }

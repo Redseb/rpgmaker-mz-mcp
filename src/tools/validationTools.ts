@@ -114,7 +114,7 @@ export async function loadProjectData(projectPath: string): Promise<ProjectData>
     if (!info) continue;
     try {
       const map = await getMap(projectPath, info.id);
-      maps.push({ id: info.id, events: map.events });
+      maps.push({ id: info.id, events: map.events, encounterList: map.encounterList });
     } catch {
       // A map listed in MapInfos may not have a MapNNN.json file yet; skip it.
     }
@@ -280,7 +280,7 @@ export const validationToolDefinitions: ToolDefinition[] = [
   {
     name: 'validate_references',
     description:
-      'Audit cross-file reference integrity across the whole project (read-only, warn-by-default): Transfer Player targets and starting position point at existing maps; starting party, actor classes, class/enemy skills, troop members, enemy drops, and skill/item effects (states, learned skills, common events, animations) all resolve; and the map tree has no dangling or cyclic parentId. Complements validate_project (which checks command shape). Returns { ok, warnings[] }.',
+      'Audit cross-file reference integrity across the whole project (read-only, warn-by-default): Transfer Player targets and starting position point at existing maps; starting party, actor classes, class/enemy skills, troop members, enemy drops, and skill/item effects (states, learned skills, common events, animations) all resolve; event commands that name a record (Change Items/Weapons/Armors, Change Party Member, Battle Processing, Shop Processing, Change State/Skill, Common Event) and map random encounters point at existing rows; and the map tree has no dangling or cyclic parentId. Complements validate_project (which checks command shape). Returns { ok, warnings[] }.',
     inputSchema: {},
     handler: (ctx) => validateReferencesTool(ctx.projectPath),
   },

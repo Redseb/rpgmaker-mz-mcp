@@ -5,13 +5,13 @@
 # RPG Maker MZ MCP Server
 
 [![CI](https://github.com/Redseb/rpgmaker-mz-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Redseb/rpgmaker-mz-mcp/actions/workflows/ci.yml)
-[![Tools](https://img.shields.io/badge/tools-120-e94560.svg)](#available-tools)
+[![Tools](https://img.shields.io/badge/tools-122-e94560.svg)](#available-tools)
 [![MCP](https://img.shields.io/badge/MCP-stdio-e94560.svg)](https://modelcontextprotocol.io/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178c6.svg)](tsconfig.json)
 [![Node.js >=20](https://img.shields.io/badge/node-%3E%3D20-3fa796.svg)](package.json)
 [![License: MIT](https://img.shields.io/badge/License-MIT-3fa796.svg)](#license)
 
-**120 tools** that let an AI assistant read and write an RPG Maker MZ project directly — actors, classes, skills, items, equipment, states, enemies, troops, common events, maps, tiles, tilesets, events, and system settings — instead of hand-editing everything in the editor.
+**122 tools** that let an AI assistant read and write an RPG Maker MZ project directly — actors, classes, skills, items, equipment, states, enemies, troops, common events, maps, tiles, tilesets, events, and system settings — instead of hand-editing everything in the editor.
 
 _"Add a town under the world map, paint it with grass, and drop in a shopkeeper who sells potions"_ → done, in-project, no editor clicks.
 
@@ -144,7 +144,7 @@ The easiest path is the `.mcpb` bundle from [Releases](https://github.com/Redseb
 
 ## Available tools
 
-All 120 tools, grouped by area. Tools that write to the project accept an optional `dryRun` argument (see [Dry-run preview](#dry-run-preview)); those that can refuse a structurally invalid write also accept `force` (see [Event validation](#event-validation-throw-by-default)).
+All 122 tools, grouped by area. Tools that write to the project accept an optional `dryRun` argument (see [Dry-run preview](#dry-run-preview)); those that can refuse a structurally invalid write also accept `force` (see [Event validation](#event-validation-throw-by-default)).
 
 <details>
 <summary><strong>Expand the full tool reference</strong></summary>
@@ -268,12 +268,17 @@ Read-only builders that return editor-faithful `EventCommand` sequences; land th
 
 - `batch_create` — create many records of one type (actors, items, weapons, armors, skills, enemies, states, classes) in a single call and a **single file write**; ids allocate sequentially, so a record can reference a sibling made earlier in the same batch; record fields the matching `create_*` tool doesn't accept come back as warnings instead of vanishing silently
 
+### Deleting records
+
+- `delete_record` — delete one database record (actor, class, skill, item, weapon, armor, enemy, troop, state, common event) by nulling its slot, so no other id shifts; reports every reference the deletion would leave dangling and **refuses** when there are any unless `force: true`
+- `reset_table` — clear a whole table except the ids in `keep` (e.g. `reset_table('skill', { keep: [1, 2] })` wipes the RTP skills but keeps Attack/Guard); kept records stay at their own id, trailing empty slots are trimmed, and it refuses on dangling references the same way
+
 ### Index & validation
 
 - `list_names` — cheap `{ id, name }` index for a table (actors, items, skills, maps, enemies, …)
 - `get_database` — full records from one table (actors, classes, items, weapons, armors, skills, enemies, troops, states, common_events), or a single record by `id`
 - `validate_event`, `validate_project` — event-command-shape validation (read-only)
-- `validate_references` — cross-file id-integrity audit (party→actor, transfer→map, effect→state/skill/common-event, drops→item, map-tree cycles, …)
+- `validate_references` — cross-file id-integrity audit (party→actor, transfer→map, effect→state/skill/common-event, drops→item, Change Items/Shop/Battle Processing→item/troop, encounters→troop, map-tree cycles, …)
 
 ### ID allocation
 
@@ -324,6 +329,20 @@ Everything fails soft: no file, bad JSON, or a malformed `text` section leaves t
 ## Reference linting
 
 `validate_references` performs a **cross-file id-integrity audit** — orthogonal to the command-shape check above. It walks the whole database and flags references that point at something that doesn't exist: a starting party member with no matching actor, a Transfer Player targeting a missing map, a skill effect that adds a non-existent state, an enemy dropping an unknown item, a cyclic map-tree parent, and more. Every check is warn-by-default and guarded against false positives on partially-loaded projects.
+
+## Deleting records and resetting tables
+
+A new MZ project ships RTP-flavoured database rows whose icons, animations and battlers point at RTP art. When you replace the art wholesale, the natural workflow is "clear the database, then author my own" — `reset_table` is that first step, and `delete_record` removes a single row.
+
+Database arrays are **index = id**, so both tools **null the slot rather than splice**: nothing is renumbered, and no surviving reference silently starts pointing at a different record. `reset_table` keeps each `keep` id at its own index and trims trailing empty slots (a table with nothing kept becomes `[null]`); new records from `create_*` / `batch_create` then allocate from the highest live id.
+
+Before writing, both tools work out which references the removal would leave dangling, by running the `validate_references` audit with and without the removed rows and keeping only the findings the removal introduces (references that were already broken aren't blamed on it). Removing skill 1 (Attack), skill 2 (Guard) or state 1 (Knockout) is always reported too, since the engine hard-codes those ids. If anything would dangle, the write is **refused** and nothing reaches disk — pass `force: true` to go ahead anyway, or `dryRun: true` to preview what disappears and what would break (a dry-run reports `requiresForce` instead of throwing). The scan covers what `validate_references` covers and says so in a `coverage` field: traits, actor starting equipment, event page conditions, Conditional Branch operands, and Script/plugin commands are not scanned.
+
+```
+reset_table({ type: 'skill', keep: [1, 2], dryRun: true })   // what goes, what breaks
+reset_table({ type: 'skill', keep: [1, 2], force: true })    // do it
+batch_create({ type: 'skill', records: [...] })              // author the replacements
+```
 
 ## ID allocation
 
