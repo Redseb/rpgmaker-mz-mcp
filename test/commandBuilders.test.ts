@@ -35,7 +35,35 @@ import {
   recoverAll,
   changeExp,
   changeLevel,
+  enemyAppear,
+  changeEnemyState,
+  abortBattle,
 } from '../src/events/commandBuilders.js';
+
+describe('battle builders (layouts per rmmz_objects.js command333/335/340)', () => {
+  it('enemy appear is [enemyIndex]', () => {
+    expect(enemyAppear(1)).toEqual({ code: 335, indent: 0, parameters: [1] });
+    expect(() => enemyAppear(-1)).toThrow(/troop slot/);
+  });
+
+  it('change enemy state is [enemyIndex, 0 add/1 remove, stateId]; -1 = entire troop', () => {
+    expect(changeEnemyState(0, 'add', 12)).toEqual({
+      code: 333,
+      indent: 0,
+      parameters: [0, 0, 12],
+    });
+    expect(changeEnemyState(-1, 'remove', 4, 1)).toEqual({
+      code: 333,
+      indent: 1,
+      parameters: [-1, 1, 4],
+    });
+    expect(() => changeEnemyState(-2, 'add', 1)).toThrow();
+  });
+
+  it('abort battle is parameterless', () => {
+    expect(abortBattle()).toEqual({ code: 340, indent: 0, parameters: [] });
+  });
+});
 
 /**
  * Byte-for-byte expectations captured from real RPG Maker MZ editor output

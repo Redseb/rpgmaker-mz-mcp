@@ -260,17 +260,19 @@ export const KNOWN_COMMANDS: Record<number, CommandSpec> = {
   323: { name: 'Change Vehicle Image' },
   324: { name: 'Change Nickname' },
   325: { name: 'Change Profile' },
-  // Enemy (in-battle; name-only)
+  326: { name: 'Change TP' },
+  // Enemy (in-battle). Codes per rmmz_objects.js Game_Interpreter.command3xx —
+  // note Change Enemy TP is 342 (added in MZ), not 333.
   331: { name: 'Change Enemy HP' },
   332: { name: 'Change Enemy MP' },
-  333: { name: 'Change Enemy TP' },
-  334: { name: 'Change Enemy State' },
-  335: { name: 'Enemy Recover All' },
-  336: { name: 'Enemy Appear' },
-  337: { name: 'Enemy Transform' },
-  338: { name: 'Show Battle Animation' },
+  333: { name: 'Change Enemy State', check: expectLength(3) },
+  334: { name: 'Enemy Recover All' },
+  335: { name: 'Enemy Appear', check: expectLength(1) },
+  336: { name: 'Enemy Transform' },
+  337: { name: 'Show Battle Animation' },
   339: { name: 'Force Action' },
-  340: { name: 'Abort Battle' },
+  340: { name: 'Abort Battle', check: expectLength(0) },
+  342: { name: 'Change Enemy TP' },
   // Scene control (all parameterless)
   351: { name: 'Open Menu Screen', check: expectLength(0) },
   352: { name: 'Open Save Screen', check: expectLength(0) },

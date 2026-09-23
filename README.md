@@ -5,13 +5,13 @@
 # RPG Maker MZ MCP Server
 
 [![CI](https://github.com/Redseb/rpgmaker-mz-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Redseb/rpgmaker-mz-mcp/actions/workflows/ci.yml)
-[![Tools](https://img.shields.io/badge/tools-123-e94560.svg)](#available-tools)
+[![Tools](https://img.shields.io/badge/tools-126-e94560.svg)](#available-tools)
 [![MCP](https://img.shields.io/badge/MCP-stdio-e94560.svg)](https://modelcontextprotocol.io/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178c6.svg)](tsconfig.json)
 [![Node.js >=20](https://img.shields.io/badge/node-%3E%3D20-3fa796.svg)](package.json)
 [![License: MIT](https://img.shields.io/badge/License-MIT-3fa796.svg)](#license)
 
-**123 tools** that let an AI assistant read and write an RPG Maker MZ project directly — actors, classes, skills, items, equipment, states, enemies, troops, common events, maps, tiles, tilesets, events, and system settings — instead of hand-editing everything in the editor.
+**126 tools** that let an AI assistant read and write an RPG Maker MZ project directly — actors, classes, skills, items, equipment, states, enemies, troops, common events, maps, tiles, tilesets, events, and system settings — instead of hand-editing everything in the editor.
 
 _"Add a town under the world map, paint it with grass, and drop in a shopkeeper who sells potions"_ → done, in-project, no editor clicks.
 
@@ -144,7 +144,7 @@ The easiest path is the `.mcpb` bundle from [Releases](https://github.com/Redseb
 
 ## Available tools
 
-All 123 tools, grouped by area. Tools that write to the project accept an optional `dryRun` argument (see [Dry-run preview](#dry-run-preview)); those that can refuse a structurally invalid write also accept `force` (see [Event validation](#event-validation-throw-by-default)).
+All 126 tools, grouped by area. Tools that write to the project accept an optional `dryRun` argument (see [Dry-run preview](#dry-run-preview)); those that can refuse a structurally invalid write also accept `force` (see [Event validation](#event-validation-throw-by-default)).
 
 <details>
 <summary><strong>Expand the full tool reference</strong></summary>
@@ -183,6 +183,8 @@ All 123 tools, grouped by area. Tools that write to the project accept an option
 
 - `create_enemy`, `update_enemy`, `search_enemies`
 - `create_troop`, `update_troop`, `search_troops` — `create_troop` validates that every member references an existing enemy
+- `build_troop_page` — build a battle-event page `{ conditions, list, span }` from a compact trigger (`when`: `turn [a, b]`, `enemyHpBelow [slot, pct]`, `actorHpBelow [actorId, pct]`, `switch`, `turnEnd` — ANDed) and a `span` (`battle` / `turn` / `moment`), no hand-built 12-field conditions object. Read-only
+- `add_troop_page` — append (or insert at `position`) one page to a troop without re-sending the others; warns on an HP condition pointing past the troop's members
 
 ### Common events
 
@@ -219,6 +221,7 @@ Read-only builders that return editor-faithful `EventCommand` sequences; land th
 - **Game state:** `build_control_switch` (121/123), `build_control_variable` (122), `build_change_gold` (125), `build_change_items` (126–128), `build_change_party_member` (129)
 - **Presentation & transitions:** `build_transfer_player` (201), `build_play_audio` (BGM/BGS/ME/SE), `build_screen_effect` (fade/tint/flash/shake), `build_picture` (show/erase), `build_character_effect` (animation/balloon)
 - **Scenes:** `build_battle_processing` (301), `build_shop_processing` (302/605), `build_name_input` (303), `build_change_actor` (HP/MP/state/recover/EXP/level, 311–316)
+- **Battle (troop pages):** `build_battle_command` — enemy appear (335, reveal a hidden member), change enemy state (333, one slot or the whole troop), abort battle (340)
 - **Insertion:** `insert_event_commands` — splice a built sequence into a map event page (the default `target`), a common event body, or a troop battle-event page, then validate
 
 ### Move routes
@@ -390,7 +393,7 @@ A write tool that echoes the whole record back costs the one caller that always 
 | `update_map_event`, `set_event_page`, `add_event_command` | event identity + per-page `trigger` / `priorityType` / `moveType` / graphic / `listLength` |
 | `insert_event_commands` | `listLength` + `listCodes` — the resulting command **codes**, without the parameters |
 | `create_common_event`, `update_common_event` | identity, trigger wiring, `listLength` + `listCodes` |
-| `create_troop`, `update_troop` | identity, members, per-page `listLength` |
+| `create_troop`, `update_troop`, `add_troop_page` | identity, members, per-page `listLength` |
 
 The rule: **keep what you would assert on, drop what you would only re-read.** Command codes stay, because they are how you verify a splice landed where you asked (`is the 302 still after the two 101s`); command parameters go, because they are what you just wrote.
 

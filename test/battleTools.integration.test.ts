@@ -13,6 +13,8 @@ import {
   updateTroop,
   getTroops,
   blankTroopPage,
+  buildTroopPage,
+  addTroopPage,
   battleToolDefinitions,
 } from '../src/tools/battleTools.js';
 import { listNames } from '../src/tools/listTools.js';
@@ -278,5 +280,107 @@ describe('battle templates', () => {
     const page = blankTroopPage();
     expect(page.list[page.list.length - 1].code).toBe(0);
     expect(page.span).toBe(0);
+  });
+});
+
+describe('troop battle-event pages', () => {
+  let dir: string;
+  const troop: Troop = {
+    id: 1,
+    name: 'Boss',
+    members: [{ enemyId: 1, x: 400, y: 300, hidden: false }],
+    pages: [blankTroopPage()],
+  };
+
+  beforeEach(async () => {
+    dir = await scaffoldProject([null, slime], [null, troop]);
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('buildTroopPage fills the full conditions object and appends the end marker', () => {
+    const text = { code: 101, indent: 0, parameters: ['', 0, 0, 2, ''] };
+    const page = buildTroopPage({ turn: [2, 3], turnEnd: true }, 'turn', [text]);
+    expect(page.span).toBe(1);
+    expect(page.conditions).toEqual({
+      ...blankTroopPage().conditions,
+      turnValid: true,
+      turnA: 2,
+      turnB: 3,
+      turnEnding: true,
+    });
+    expect(page.list).toEqual([text, { code: 0, indent: 0, parameters: [] }]);
+  });
+
+  it('buildTroopPage encodes HP and switch triggers', () => {
+    const c = buildTroopPage({
+      enemyHpBelow: [0, 50],
+      actorHpBelow: [2, 25],
+      switch: 7,
+    }).conditions;
+    expect(c).toMatchObject({
+      enemyValid: true,
+      enemyIndex: 0,
+      enemyHp: 50,
+      actorValid: true,
+      actorId: 2,
+      actorHp: 25,
+      switchValid: true,
+      switchId: 7,
+      turnValid: false,
+    });
+  });
+
+  it('buildTroopPage rejects a page with no condition (it would never run)', () => {
+    expect(() => buildTroopPage({})).toThrow(/at least one condition/);
+    expect(() => buildTroopPage({ enemyHpBelow: [0, 150] })).toThrow(/0–100/);
+  });
+
+  it('addTroopPage appends without touching existing pages, or inserts at position', async () => {
+    const page = buildTroopPage({ turn: [1, 0] }, 'battle', [
+      { code: 340, indent: 0, parameters: [] },
+    ]);
+    const added = await addTroopPage(dir, 1, page);
+    expect(added.pageIndex).toBe(1);
+    let saved = (await getTroops(dir))[1]!;
+    expect(saved.pages).toHaveLength(2);
+    expect(saved.pages[0]).toEqual(blankTroopPage());
+    expect(saved.pages[1].list[0].code).toBe(340);
+
+    const first = await addTroopPage(dir, 1, buildTroopPage({ switch: 3 }), 0);
+    expect(first.pageIndex).toBe(0);
+    saved = (await getTroops(dir))[1]!;
+    expect(saved.pages.map((p) => p.conditions.switchValid)).toEqual([true, false, false]);
+    await expect(addTroopPage(dir, 99, page)).rejects.toThrow(/not found/);
+  });
+
+  it('the add_troop_page handler refuses a bad command list and warns on an out-of-range slot', async () => {
+    const def = battleToolDefinitions.find((t) => t.name === 'add_troop_page')!;
+    const bad = buildTroopPage({ turn: [0, 0] }, 'battle', [
+      { code: 335, indent: 0, parameters: [] },
+    ]);
+    await expect(def.handler({ projectPath: dir }, { troopId: 1, page: bad })).rejects.toThrow(
+      /Refusing to write/,
+    );
+    expect((await getTroops(dir))[1]!.pages).toHaveLength(1);
+
+    const result = (await def.handler(
+      { projectPath: dir },
+      { troopId: 1, page: buildTroopPage({ enemyHpBelow: [3, 50] }) },
+    )) as { pageIndex: number; warnings?: { message: string }[] };
+    expect(result.pageIndex).toBe(1);
+    expect(result.warnings?.some((w) => /enemyIndex 3/.test(w.message))).toBe(true);
+  });
+
+  it('the build_troop_page handler returns { page }', async () => {
+    const def = battleToolDefinitions.find((t) => t.name === 'build_troop_page')!;
+    const result = (await def.handler(
+      { projectPath: dir },
+      { when: { enemyHpBelow: [0, 30] }, span: 'moment' },
+    )) as { page: { span: number; conditions: { enemyHp: number } } };
+    expect(result.page.span).toBe(2);
+    expect(result.page.conditions.enemyHp).toBe(30);
   });
 });

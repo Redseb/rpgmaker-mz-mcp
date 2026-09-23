@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { readJsonFile, readJsonArraySoft, getDataPath } from '../utils/fileHandler.js';
 import { commitChange } from '../utils/commit.js';
-import { Enemy, SystemData, Troop, TroopMember, TroopPage } from '../utils/types.js';
+import { Enemy, EventCommand, SystemData, Troop, TroopMember, TroopPage } from '../utils/types.js';
 import { ToolDefinition } from '../registry.js';
 import { summarizeTroopResult } from '../utils/responseSummary.js';
 import { definedOnly } from '../utils/records.js';
@@ -61,11 +61,152 @@ export function blankTroopPage(): TroopPage {
   };
 }
 
+/** When a troop battle-event page runs — `span` on disk (0 battle / 1 turn / 2 moment). */
+export type TroopPageSpan = 'battle' | 'turn' | 'moment';
+const SPAN_CODE: Record<TroopPageSpan, number> = { battle: 0, turn: 1, moment: 2 };
+
+/**
+ * The trigger of a troop battle-event page. Every key given is ANDed (the
+ * editor's condition checkboxes); at least one is required — a page with no
+ * condition enabled never runs (`Game_Troop.meetsConditions` returns false).
+ *
+ * - `turn: [a, b]` — turn `a + b*X` (b 0 = only turn a). Same formula, and the
+ *   same `$gameTroop.turnCount()` read, as an enemy action pattern's Turn
+ *   condition, so matching `[a, b]` fire together.
+ * - `enemyHpBelow: [enemyIndex, pct]` — that troop slot's HP% ≤ pct.
+ * - `actorHpBelow: [actorId, pct]` — that actor's HP% ≤ pct.
+ * - `switch: id` — that switch is ON.
+ * - `turnEnd: true` — at the end of a turn.
+ */
+export interface TroopPageWhen {
+  turn?: [number, number];
+  enemyHpBelow?: [number, number];
+  actorHpBelow?: [number, number];
+  switch?: number;
+  turnEnd?: boolean;
+}
+
+/** Validate a 0–100 HP percentage condition value. */
+function assertPct(pct: number, what: string): void {
+  if (!Number.isInteger(pct) || pct < 0 || pct > 100) {
+    throw new Error(`${what} HP% must be an integer 0–100, got ${pct}`);
+  }
+}
+
+/**
+ * Build a complete troop battle-event page (`{ conditions, list, span }`) from a
+ * compact trigger — the full editor `conditions` object is filled with the
+ * editor's defaults for every toggle left off, and `commands` gets its code-0
+ * end marker appended when missing. Pure (no I/O) so the shape is unit-testable;
+ * `add_troop_page` / `create_troop` / `update_troop` write it.
+ */
+export function buildTroopPage(
+  when: TroopPageWhen,
+  span: TroopPageSpan = 'battle',
+  commands: EventCommand[] = [],
+): TroopPage {
+  const page = blankTroopPage();
+  const c = page.conditions;
+  let any = false;
+  if (when.turn !== undefined) {
+    const [a, b] = when.turn;
+    if (!Number.isInteger(a) || !Number.isInteger(b) || a < 0 || b < 0) {
+      throw new Error(`turn condition needs non-negative integers [a, b], got [${a}, ${b}]`);
+    }
+    Object.assign(c, { turnValid: true, turnA: a, turnB: b });
+    any = true;
+  }
+  if (when.enemyHpBelow !== undefined) {
+    const [index, pct] = when.enemyHpBelow;
+    if (!Number.isInteger(index) || index < 0 || index > 7) {
+      throw new Error(`enemyHpBelow needs a 0-based troop slot 0–7, got ${index}`);
+    }
+    assertPct(pct, 'enemyHpBelow');
+    Object.assign(c, { enemyValid: true, enemyIndex: index, enemyHp: pct });
+    any = true;
+  }
+  if (when.actorHpBelow !== undefined) {
+    const [actorId, pct] = when.actorHpBelow;
+    if (!Number.isInteger(actorId) || actorId < 1) {
+      throw new Error(`actorHpBelow needs an actor id ≥ 1, got ${actorId}`);
+    }
+    assertPct(pct, 'actorHpBelow');
+    Object.assign(c, { actorValid: true, actorId, actorHp: pct });
+    any = true;
+  }
+  if (when.switch !== undefined) {
+    if (!Number.isInteger(when.switch) || when.switch < 1) {
+      throw new Error(`switch condition needs a switch id ≥ 1, got ${when.switch}`);
+    }
+    Object.assign(c, { switchValid: true, switchId: when.switch });
+    any = true;
+  }
+  if (when.turnEnd) {
+    c.turnEnding = true;
+    any = true;
+  }
+  if (!any) {
+    throw new Error(
+      'A troop page needs at least one condition (turn, enemyHpBelow, actorHpBelow, switch, turnEnd) — with none enabled the engine never runs it',
+    );
+  }
+  const list: EventCommand[] = commands.map((command) => ({
+    code: command.code,
+    indent: command.indent ?? 0,
+    parameters: Array.isArray(command.parameters) ? [...command.parameters] : [],
+  }));
+  const last = list[list.length - 1];
+  if (!last || last.code !== 0 || last.indent !== 0) {
+    list.push({ code: 0, indent: 0, parameters: [] });
+  }
+  page.list = list;
+  page.span = SPAN_CODE[span];
+  return page;
+}
+
+/**
+ * Advisory (never blocking) findings on a troop page's trigger: an HP-condition
+ * slot past the end of `members` can never be met, and a page with commands but
+ * no condition enabled never runs at all.
+ */
+function troopPageConditionWarnings(troop: Troop): ValidationWarning[] {
+  const warnings: ValidationWarning[] = [];
+  const memberCount = Array.isArray(troop.members) ? troop.members.length : 0;
+  (Array.isArray(troop.pages) ? troop.pages : []).forEach((page, i) => {
+    const c = page?.conditions;
+    if (!c) return;
+    const path = `troop ${troop.id} / page ${i} / conditions`;
+    if (c.enemyValid && c.enemyIndex >= memberCount) {
+      warnings.push({
+        path,
+        severity: 'warning',
+        message: `enemyIndex ${c.enemyIndex} is past the troop's ${memberCount} member(s) (it is a 0-based slot, not an enemy id) — this condition can never be met`,
+      });
+    }
+    const hasCommands = Array.isArray(page.list) && page.list.some((command) => command.code !== 0);
+    if (
+      hasCommands &&
+      !c.turnEnding &&
+      !c.turnValid &&
+      !c.enemyValid &&
+      !c.actorValid &&
+      !c.switchValid
+    ) {
+      warnings.push({
+        path,
+        severity: 'warning',
+        message: 'no condition is enabled, so the engine never runs this page',
+      });
+    }
+  });
+  return warnings;
+}
+
 /**
  * The pre-commit gate the troop-writing tools install. A troop's pages reuse the
  * event-command `list` format, so the same command validator applies — and, as
  * with map events, a structurally invalid page is refused before the write
- * rather than saved and warned about.
+ * rather than saved and warned about. Page-trigger findings are advisory.
  */
 function troopWriteGate(force: boolean | undefined): ReturnType<typeof writeGate<Troop>> {
   return writeGate<Troop>(force, 'troop', (troop) => {
@@ -75,6 +216,7 @@ function troopWriteGate(force: boolean | undefined): ReturnType<typeof writeGate
         warnings.push(...validateCommandList(page?.list, `troop ${troop.id} / page ${i}`));
       });
     }
+    warnings.push(...troopPageConditionWarnings(troop));
     return warnings;
   });
 }
@@ -320,6 +462,75 @@ export async function updateTroop(
   return merged;
 }
 
+/**
+ * Append (or insert at `position`) one battle-event page to an existing troop
+ * without re-sending the others. Pages are scanned in order and the first one
+ * whose conditions hold runs, so `position` matters when triggers overlap.
+ */
+export async function addTroopPage(
+  projectPath: string,
+  troopId: number,
+  page: TroopPage,
+  position?: number,
+  precommit?: PreCommit<Troop>,
+): Promise<{ troop: Troop; pageIndex: number }> {
+  const troops = await getTroops(projectPath);
+  const index = troops.findIndex((t) => t && t.id === troopId);
+  if (index === -1) {
+    throw new Error(`Troop with ID ${troopId} not found`);
+  }
+  const troop = troops[index]!;
+  const pages = Array.isArray(troop.pages) ? [...troop.pages] : [];
+  const at =
+    position !== undefined && position >= 0 && position <= pages.length ? position : pages.length;
+  pages.splice(at, 0, page);
+  const updated: Troop = { ...troop, pages };
+  troops[index] = updated;
+
+  await precommit?.(updated);
+
+  await commitChange(getDataPath(projectPath, 'Troops.json'), troops);
+  return { troop: updated, pageIndex: at };
+}
+
+/** Zod shape for a compact troop-page trigger (see {@link TroopPageWhen}). */
+const troopPageWhenShape = z
+  .object({
+    turn: z
+      .tuple([z.number().int().min(0), z.number().int().min(0)])
+      .optional()
+      .describe(
+        '[a, b]: turn a + b*X (b 0 = only turn a). Match an enemy action-pattern Turn [a, b] to fire on the same turn',
+      ),
+    enemyHpBelow: z
+      .tuple([z.number().int().min(0).max(7), z.number().int().min(0).max(100)])
+      .optional()
+      .describe('[enemyIndex, pct]: 0-based troop slot (NOT enemy id) at or below pct% HP'),
+    actorHpBelow: z
+      .tuple([z.number().int().positive(), z.number().int().min(0).max(100)])
+      .optional()
+      .describe('[actorId, pct]: that actor at or below pct% HP'),
+    switch: z.number().int().positive().optional().describe('Switch id that must be ON'),
+    turnEnd: z.boolean().optional().describe('true: run at the end of a turn'),
+  })
+  .describe('Trigger; every key given is ANDed, at least one required');
+
+/** Zod shape for a raw event command inside a troop page. */
+const troopCommandShape = z.object({
+  code: z.number().int().describe('Event command code'),
+  indent: z.number().int().optional().describe('Indentation level (default 0)'),
+  parameters: z.array(z.unknown()).optional().describe('Command parameters (default [])'),
+});
+
+/** Zod shape for a full troop page (e.g. the `page` returned by build_troop_page). */
+const troopPageShape = z
+  .object({
+    conditions: z.record(z.string(), z.unknown()).describe('The full editor conditions object'),
+    list: z.array(troopCommandShape).describe('Event commands, ending with the code-0 end marker'),
+    span: z.number().int().min(0).max(2).describe('0 battle / 1 turn / 2 moment'),
+  })
+  .describe('A troop battle-event page, e.g. the `page` from build_troop_page');
+
 const troopMemberSchema = z.object({
   enemyId: z.number().int().describe('Enemy id from Enemies.json'),
   x: z.number().int().describe('X screen position of the enemy in battle'),
@@ -438,6 +649,58 @@ export const battleToolDefinitions: ToolDefinition[] = [
       const gate = troopWriteGate(args.force);
       const troop = await updateTroop(ctx.projectPath, args.troopId, args.updates, gate.precommit);
       return gate.respond({ troop });
+    },
+  },
+  {
+    name: 'build_troop_page',
+    description:
+      'Build a troop battle-event page { conditions, list, span } from a compact trigger — no hand-built 12-field conditions object. `when` keys (ANDed, at least one): turn [a, b] (turn a + b*X; b 0 = only turn a), enemyHpBelow [enemyIndex, pct] (0-based troop slot, NOT enemy id), actorHpBelow [actorId, pct], switch id, turnEnd true. `span`: battle (runs once per battle, default), turn (once per turn), moment (re-runs while the condition holds — guard it with a switch). Timing (turn-based battles): an enemy action pattern with conditionType 1 / [a, b] is chosen during turn N\'s input phase (troop turnCount N-1, +1) and a troop page turn [a, b] is checked once turn N\'s action phase starts (turnCount N), so matching [a, b] land on the same battle turn N — the page runs before anyone acts; add turnEnd: true to run it after that turn resolves instead (the classic telegraph: warn at the end of the wind-up turn, strike next turn). Turn 0 = battle start. With b > 0 use span "turn", or a "battle" page fires only once. `commands` come from the build_* tools (build_show_text, build_battle_command, …); the end marker is appended. Read-only: returns { page } — land it with add_troop_page (or create_troop/update_troop `pages`).',
+    inputSchema: {
+      when: troopPageWhenShape,
+      span: z
+        .enum(['battle', 'turn', 'moment'])
+        .optional()
+        .describe('How often the page may run (default battle)'),
+      commands: z
+        .array(troopCommandShape)
+        .optional()
+        .describe("The page's event commands (e.g. from build_* tools); default empty"),
+    },
+    handler: async (_ctx, args) => ({
+      page: buildTroopPage(
+        args.when as TroopPageWhen,
+        (args.span as TroopPageSpan | undefined) ?? 'battle',
+        (args.commands as EventCommand[] | undefined) ?? [],
+      ),
+    }),
+  },
+  {
+    name: 'add_troop_page',
+    mutates: true,
+    forceable: true,
+    summarize: summarizeTroopResult,
+    description:
+      'Append one battle-event page (e.g. the `page` from build_troop_page) to an existing troop without re-sending its other pages; `position` inserts it at that 0-based page index instead (the first page whose conditions hold runs, so order matters when triggers overlap). A structurally invalid page refuses the write (nothing is saved) — pass force: true to override; an HP condition on a troop slot past the troop\'s members, or a page with no condition enabled, is warned (never blocked). Returns { troop, pageIndex, warnings? }; fill it further with insert_event_commands target "troop_page".',
+    inputSchema: {
+      troopId: z.number().int().positive().describe('The troop to add the page to'),
+      page: troopPageShape,
+      position: z
+        .number()
+        .int()
+        .min(0)
+        .optional()
+        .describe('0-based page index to insert at (default: append)'),
+    },
+    handler: async (ctx, args) => {
+      const gate = troopWriteGate(args.force);
+      const result = await addTroopPage(
+        ctx.projectPath,
+        args.troopId,
+        args.page as TroopPage,
+        args.position,
+        gate.precommit,
+      );
+      return gate.respond(result);
     },
   },
   {

@@ -219,6 +219,41 @@ applyToAutotileKind)` — or check with `get_tile_flags`/`check_passability`.
   `update_starting_position(mapId, x, y)`. A game with no party or a start on a blocked
   tile is broken.
 
+## Boss fights — troop battle-event pages
+
+- **Build pages, don't hand-roll them.** `build_troop_page({ when, span, commands })`
+  fills the 12-field `conditions` object; land it with `add_troop_page(troopId, page)`
+  (appends without re-sending the other pages). `when` keys are ANDed: `turn [a, b]`,
+  `enemyHpBelow [slot, pct]`, `actorHpBelow [actorId, pct]`, `switch`, `turnEnd`.
+- **`enemyIndex` is the 0-based troop slot** (`members[]` order), never an enemy id —
+  for HP conditions and for `build_battle_command` (enemy_appear / enemy_state).
+- **Span matters.** `battle` runs once per fight (phase change at HP%), `turn` once per
+  turn (anything repeating — a recurring `turn [a, b>0]` page on `battle` span fires
+  only the first time), `moment` re-runs while true (guard it with a switch).
+- **Summons:** add the minion to `members` with `hidden: true`, then an
+  `enemyHpBelow` page with `build_battle_command({ kind: "enemy_appear", enemyIndex })`.
+- **"Yield" fights:** a page with `abort_battle` (340) ends the battle with no
+  victory/defeat; the calling Battle Processing takes its **Escape** branch, so give it
+  `canEscape: true` and put the aftermath there.
+
+### Recipe: telegraphed boss moves
+
+Warn the player one turn before a big hit, every cycle (turn-based battle system):
+
+1. Enemy `actions`: a wind-up skill (e.g. "Gather Power", or one that adds a
+   "Charging" state) at `conditionType: 1, conditionParam1: a, conditionParam2: b`, and
+   the big move at `conditionType: 1, conditionParam1: a + 1, conditionParam2: b`. Give
+   both a rating ≥ 3 above the enemy's normal actions — the engine drops every action
+   rated ≤ (max − 3), so they are forced on their turns.
+2. Troop page: `build_troop_page({ when: { turn: [a, b], turnEnd: true }, span: "turn",
+   commands: <build_show_text "The golem is gathering power!"> })` → `add_troop_page`.
+   Troop-page and action-pattern Turn conditions count the same battle turn (the enemy
+   chooses turn N's action while the troop count is N−1, +1; the page checks after it
+   ticks to N), so `turn [a, b]` + `turnEnd` shows the warning at the end of the
+   wind-up turn — right before the player picks commands for the big-move turn.
+   Without `turnEnd`, the page runs at the *start* of turn N's actions instead.
+3. Playtest it: confirm the warning and the strike land on consecutive turns.
+
 ## Ship checklist
 
 1. `validate_project` (command shape), `validate_references` (id integrity),

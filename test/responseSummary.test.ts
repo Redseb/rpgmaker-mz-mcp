@@ -273,6 +273,7 @@ describe('registry contract for summarizers', () => {
       .sort();
     expect(summarizing).toEqual([
       'add_event_command',
+      'add_troop_page',
       'create_common_event',
       'create_troop',
       'insert_event_commands',

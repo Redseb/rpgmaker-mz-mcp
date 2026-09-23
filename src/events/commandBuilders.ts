@@ -85,6 +85,9 @@ const CODE = {
   RECOVER_ALL: 314,
   CHANGE_EXP: 315,
   CHANGE_LEVEL: 316,
+  CHANGE_ENEMY_STATE: 333,
+  ENEMY_APPEAR: 335,
+  ABORT_BATTLE: 340,
   END_OF_LIST: 0,
 } as const;
 
@@ -973,4 +976,50 @@ export function changeLevel(
     ...operateValueParams(operation, operand),
     showLevelUp,
   ]);
+}
+
+// --- Battle (troop battle-event) commands ---
+
+/**
+ * Enemy Appear (command 335) — reveal a troop member that started `hidden` (a
+ * mid-battle summon / reinforcement). `enemyIndex` is the 0-based troop slot
+ * (`members[]` order), NOT an enemy id. On disk: `[enemyIndex]`.
+ */
+export function enemyAppear(enemyIndex: number, indent = 0): EventCommand {
+  if (!Number.isInteger(enemyIndex) || enemyIndex < 0) {
+    throw new Error(`enemyAppear needs a 0-based troop slot index, got ${enemyIndex}`);
+  }
+  return cmd(CODE.ENEMY_APPEAR, indent, [enemyIndex]);
+}
+
+/**
+ * Change Enemy State (command 333) — add or remove a state on one troop member
+ * (0-based slot) or the entire troop (`enemyIndex` -1). On disk:
+ * `[enemyIndex, operation(0 add/1 remove), stateId]`.
+ */
+export function changeEnemyState(
+  enemyIndex: number,
+  operation: 'add' | 'remove',
+  stateId: number,
+  indent = 0,
+): EventCommand {
+  if (!Number.isInteger(enemyIndex) || enemyIndex < -1) {
+    throw new Error(
+      `changeEnemyState needs a troop slot index (or -1 = entire troop), got ${enemyIndex}`,
+    );
+  }
+  return cmd(CODE.CHANGE_ENEMY_STATE, indent, [
+    enemyIndex,
+    operation === 'remove' ? 1 : 0,
+    stateId,
+  ]);
+}
+
+/**
+ * Abort Battle (command 340) — end the battle immediately with no victory or
+ * defeat (the "yield" fight); a Battle Processing with canEscape takes its
+ * Escape branch. Parameterless on disk.
+ */
+export function abortBattle(indent = 0): EventCommand {
+  return cmd(CODE.ABORT_BATTLE, indent);
 }
