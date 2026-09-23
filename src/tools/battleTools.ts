@@ -1,14 +1,14 @@
 import { z } from 'zod';
 import { readJsonFile, readJsonArraySoft, getDataPath } from '../utils/fileHandler.js';
 import { commitChange } from '../utils/commit.js';
-import { Enemy, Troop, TroopMember, TroopPage } from '../utils/types.js';
+import { Enemy, SystemData, Troop, TroopMember, TroopPage } from '../utils/types.js';
 import { ToolDefinition } from '../registry.js';
 import { summarizeTroopResult } from '../utils/responseSummary.js';
 import { definedOnly } from '../utils/records.js';
 import { validateCommandList, ValidationWarning } from '../validation/eventCommands.js';
 import { PreCommit, writeGate } from '../validation/gate.js';
 import { firstMissingEnemyRef } from '../validation/createRefs.js';
-import { assetNameWarning } from './assetTools.js';
+import { assetNameWarning, listAssets } from './assetTools.js';
 
 /**
  * Blank enemy mirroring what the RPG Maker MZ editor writes for a freshly-created
@@ -80,18 +80,53 @@ function troopWriteGate(force: boolean | undefined): ReturnType<typeof writeGate
 }
 
 /**
+ * Whether the project uses side-view battles (`System.optSideView`), which decides
+ * the folder RMMZ loads enemy battlers from. Fails soft to `false` (front-view)
+ * when System.json is missing or unreadable.
+ */
+async function isSideView(projectPath: string): Promise<boolean> {
+  try {
+    const system = await readJsonFile<SystemData>(getDataPath(projectPath, 'System.json'));
+    return system?.optSideView === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Warn (never throw) when an enemy's `battlerName` isn't among the project's
- * `img/enemies` assets — a wrong battler filename is a silent runtime failure (a
- * blank/missing sprite in battle). Skips the check when the name is empty or the
- * asset dir is empty/missing (nothing to validate against — e.g. a fixture), so it
- * can't emit false positives. Mirrors `characterNameWarnings` (eventPageTools) and
- * `audioNameWarnings` (eventCommandTools).
+ * enemy battler assets — `img/sv_enemies` when the project is side-view
+ * (`System.optSideView`), `img/enemies` otherwise, matching where RMMZ loads it.
+ * A wrong battler filename is a silent runtime failure (a blank/missing sprite in
+ * battle). Skips the check when the name is empty or the asset dir is
+ * empty/missing (nothing to validate against — e.g. a fixture), so it can't emit
+ * false positives — unless the name exists in the *other* battler folder, which
+ * is flagged with a hint saying where it was found. Mirrors
+ * `characterNameWarnings` (eventPageTools) and `audioNameWarnings`
+ * (eventCommandTools).
  */
 export async function battlerNameWarnings(
   projectPath: string,
   name: string | undefined,
 ): Promise<ValidationWarning[]> {
-  return assetNameWarning(projectPath, 'enemies', name, {
+  if (!projectPath || !name) return [];
+  const sideView = await isSideView(projectPath);
+  const type = sideView ? 'sv_enemies' : 'enemies';
+  const other = sideView ? 'enemies' : 'sv_enemies';
+  const [{ names }, { names: otherNames }] = await Promise.all([
+    listAssets(projectPath, type),
+    listAssets(projectPath, other),
+  ]);
+  if (!names.includes(name) && otherNames.includes(name)) {
+    return [
+      {
+        path: 'battlerName',
+        code: undefined,
+        message: `battler "${name}" is not a known ${type} asset — found in img/${other}, but the project is ${sideView ? 'side-view' : 'front-view'} (a wrong folder shows a blank sprite in battle)`,
+      },
+    ];
+  }
+  return assetNameWarning(projectPath, type, name, {
     path: 'battlerName',
     label: 'battler',
     consequence: 'a wrong filename shows a blank sprite in battle',
@@ -297,10 +332,13 @@ export const battleToolDefinitions: ToolDefinition[] = [
     name: 'create_enemy',
     mutates: true,
     description:
-      "Create a new enemy in data/Enemies.json. Only `name` is required; omitted fields use the editor's new-enemy defaults (100 HP, one Attack action, no drops). Allocates the next unused enemy id and returns `{ enemy, warnings? }` (warn-by-default: a `battlerName` not found in img/enemies is flagged, never blocked). Throws if an `actions[].skillId` or a `dropItems[].dataId` (item/weapon/armor by `kind`) references a record that does not exist. NOTE: an enemy with no Hit Rate trait (xparam id 0: trait { code: 22, dataId: 0, value: 0.95 }) always misses physical actions — pass one in `traits` if the enemy should land basic attacks.",
+      "Create a new enemy in data/Enemies.json. Only `name` is required; omitted fields use the editor's new-enemy defaults (100 HP, one Attack action, no drops). Allocates the next unused enemy id and returns `{ enemy, warnings? }` (warn-by-default: a `battlerName` not found in img/enemies (img/sv_enemies for a side-view project) is flagged, never blocked). Throws if an `actions[].skillId` or a `dropItems[].dataId` (item/weapon/armor by `kind`) references a record that does not exist. NOTE: an enemy with no Hit Rate trait (xparam id 0: trait { code: 22, dataId: 0, value: 0.95 }) always misses physical actions — pass one in `traits` if the enemy should land basic attacks.",
     inputSchema: {
       name: z.string().describe('Enemy name shown in battle and the database'),
-      battlerName: z.string().optional().describe('Battler graphic filename (img/enemies)'),
+      battlerName: z
+        .string()
+        .optional()
+        .describe('Battler graphic filename (img/enemies; img/sv_enemies when System.optSideView)'),
       battlerHue: z.number().int().optional().describe('Battler hue rotation 0-360'),
       params: z
         .array(z.number())
@@ -332,7 +370,7 @@ export const battleToolDefinitions: ToolDefinition[] = [
     name: 'update_enemy',
     mutates: true,
     description:
-      "Update an enemy's properties (shallow merge into the existing record). Returns `{ enemy, warnings? }` — a `battlerName` not found in img/enemies is flagged warn-by-default.",
+      "Update an enemy's properties (shallow merge into the existing record). Returns `{ enemy, warnings? }` — a `battlerName` not found in img/enemies (img/sv_enemies for a side-view project) is flagged warn-by-default.",
     inputSchema: {
       enemyId: z.number().int().positive().describe('The ID of the enemy to update'),
       updates: z

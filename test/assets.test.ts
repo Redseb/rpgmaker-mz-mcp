@@ -95,6 +95,47 @@ describe('checkAssets — records', () => {
     expect(checkAssets(data, assetsFrom({ enemies: [] }))).toEqual([]);
   });
 
+  describe('enemy battler folder follows System.optSideView', () => {
+    const enemyData = (sideView: boolean | undefined): AssetProjectData =>
+      emptyData({
+        enemies: [null, { id: 1, battlerName: 'Orc' } as unknown as AssetProjectData['enemies'][0]],
+        system: (sideView === undefined
+          ? null
+          : { optSideView: sideView }) as unknown as AssetProjectData['system'],
+      });
+
+    it('front-view checks img/enemies', () => {
+      expect(checkAssets(enemyData(false), assetsFrom({ enemies: ['Orc'] }))).toEqual([]);
+      expect(checkAssets(enemyData(undefined), assetsFrom({ enemies: ['Orc'] }))).toEqual([]);
+    });
+
+    it('side-view checks img/sv_enemies', () => {
+      expect(checkAssets(enemyData(true), assetsFrom({ sv_enemies: ['Orc'] }))).toEqual([]);
+      const warnings = checkAssets(enemyData(true), assetsFrom({ sv_enemies: ['Slime'] }));
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]!.message).toMatch(/img\/sv_enemies/);
+    });
+
+    it('side-view flags a battler found only in img/enemies, naming that folder', () => {
+      const warnings = checkAssets(enemyData(true), assetsFrom({ enemies: ['Orc'] }));
+      expect(warnings).toEqual([
+        expect.objectContaining({ category: 'enemy', path: 'enemy 1 / battlerName' }),
+      ]);
+      expect(warnings[0]!.message).toMatch(/missing from img\/sv_enemies/);
+      expect(warnings[0]!.message).toMatch(/found in img\/enemies.*side-view/);
+    });
+
+    it('front-view flags a battler found only in img/sv_enemies, naming that folder', () => {
+      const warnings = checkAssets(
+        enemyData(false),
+        assetsFrom({ sv_enemies: ['Orc'], enemies: ['Bat'] }),
+      );
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]!.message).toMatch(/missing from img\/enemies/);
+      expect(warnings[0]!.message).toMatch(/found in img\/sv_enemies.*front-view/);
+    });
+  });
+
   it('flags a tileset sheet slot', () => {
     const data = emptyData({
       tilesets: [

@@ -124,6 +124,57 @@ describe('enemy tools (integration)', () => {
     )) as { enemy: Enemy; warnings?: unknown[] };
     expect(ok.warnings).toBeUndefined();
   });
+
+  describe('battlerName folder follows System.optSideView', () => {
+    const setSideView = (on: boolean) =>
+      writeFile(join(dir, 'data', 'System.json'), JSON.stringify({ optSideView: on }));
+    const seed = async (folder: string, name: string) => {
+      await mkdir(join(dir, 'img', folder), { recursive: true });
+      await writeFile(join(dir, 'img', folder, `${name}.png`), '');
+    };
+    type Result = { enemy: Enemy; warnings?: { path: string; message: string }[] };
+    const create = (args: Record<string, unknown>) =>
+      battleToolDefinitions
+        .find((t) => t.name === 'create_enemy')!
+        .handler({ projectPath: dir }, args);
+
+    it('side-view: accepts a battler in img/sv_enemies', async () => {
+      await setSideView(true);
+      await seed('sv_enemies', 'Orc');
+      const result = (await create({ name: 'Orc', battlerName: 'Orc' })) as Result;
+      expect(result.warnings).toBeUndefined();
+    });
+
+    it('side-view: warns when the battler is only in img/enemies, naming that folder', async () => {
+      await setSideView(true);
+      await seed('enemies', 'Orc');
+      const result = (await create({ name: 'Orc', battlerName: 'Orc' })) as Result;
+      expect(result.warnings).toHaveLength(1);
+      expect(result.warnings![0]!.path).toBe('battlerName');
+      expect(result.warnings![0]!.message).toMatch(/sv_enemies/);
+      expect(result.warnings![0]!.message).toMatch(/found in img\/enemies.*side-view/);
+    });
+
+    it('front-view: warns when the battler is only in img/sv_enemies, naming that folder', async () => {
+      await setSideView(false);
+      await seed('sv_enemies', 'Orc');
+      const result = (await create({ name: 'Orc', battlerName: 'Orc' })) as Result;
+      expect(result.warnings).toHaveLength(1);
+      expect(result.warnings![0]!.message).toMatch(/found in img\/sv_enemies.*front-view/);
+    });
+
+    it('front-view: accepts a battler in img/enemies (update path too)', async () => {
+      await setSideView(false);
+      await seed('enemies', 'Orc');
+      await seed('sv_enemies', 'Other');
+      const def = battleToolDefinitions.find((t) => t.name === 'update_enemy')!;
+      const result = (await def.handler(
+        { projectPath: dir },
+        { enemyId: 1, updates: { battlerName: 'Orc' } },
+      )) as Result;
+      expect(result.warnings).toBeUndefined();
+    });
+  });
 });
 
 describe('troop tools (integration)', () => {

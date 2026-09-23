@@ -158,6 +158,7 @@ const AUDITED_ASSET_TYPES: AssetType[] = [
   'faces',
   'sv_actors',
   'enemies',
+  'sv_enemies',
   'tilesets',
   'titles1',
   'titles2',

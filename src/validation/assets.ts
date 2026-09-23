@@ -59,6 +59,7 @@ const ASSET_FOLDER: Record<string, string> = {
   faces: 'img/faces',
   sv_actors: 'img/sv_actors',
   enemies: 'img/enemies',
+  sv_enemies: 'img/sv_enemies',
   tilesets: 'img/tilesets',
   titles1: 'img/titles1',
   titles2: 'img/titles2',
@@ -160,15 +161,40 @@ function checkActors(
   });
 }
 
-/** Enemy battler filenames (the Mudcrab case). */
+/**
+ * Enemy battler filenames (the Mudcrab case). RMMZ loads enemy battlers from
+ * `img/sv_enemies` when `System.optSideView` is on and from `img/enemies`
+ * otherwise, so the name is checked against the folder the engine will actually
+ * read. A name missing there but present in the *other* folder is flagged even
+ * if the right folder is empty/missing — the asset set is evidently present, the
+ * file is just in the wrong place — with a hint naming where it was found.
+ */
 function checkEnemies(
   data: AssetProjectData,
   assets: AvailableAssets,
   warnings: AssetWarning[],
 ): void {
+  const sideView = data.system?.optSideView === true;
+  const type = sideView ? 'sv_enemies' : 'enemies';
+  const other = sideView ? 'enemies' : 'sv_enemies';
   data.enemies.forEach((enemy) => {
     if (!enemy) return;
-    checkAsset(assets, 'enemies', enemy.battlerName, 'enemy', `enemy ${enemy.id} / battlerName`, warnings); // prettier-ignore
+    const name = enemy.battlerName;
+    const path = `enemy ${enemy.id} / battlerName`;
+    if (
+      typeof name === 'string' &&
+      name !== '' &&
+      !assets[type]?.has(name) &&
+      assets[other]?.has(name)
+    ) {
+      warnings.push({
+        category: 'enemy',
+        path,
+        message: `references "${name}", which is missing from ${ASSET_FOLDER[type]} (found in ${ASSET_FOLDER[other]}, but the project is ${sideView ? 'side-view' : 'front-view'})`,
+      });
+      return;
+    }
+    checkAsset(assets, type, name, 'enemy', path, warnings);
   });
 }
 
