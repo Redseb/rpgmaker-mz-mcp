@@ -25,8 +25,12 @@ import { ToolDefinition } from '../registry.js';
  * contributes its path-basename, its delimiter-split tokens (so a notetag like
  * `<Portrait: Hero>` keeps `Hero`), and extension-stripped forms of all of those.
  *
- * **`effects/`:** an `.efkefc` is kept when its name (an animation's `effectName`)
- * is referenced like any other asset. Its textures/models/sounds aren't named
+ * **`effects/`:** an `.efkefc` is kept only when its name is a *real* effect
+ * reference ({@link collectEffectReferences}): an animation's `effectName`, a
+ * Plugin Command's (357) arguments, or a plugin string (`js/plugins.js`
+ * parameters, `js/plugins/*.js` literals and `@default`s). Other data strings are
+ * ignored here — stock effect names (`Poison`, `Blind`, `Sleep`, …) collide with
+ * ordinary animation/state/skill names. Its textures/models/sounds aren't named
  * anywhere in the data — they're listed inside the binary effect file — so they
  * are kept by parsing each kept effect's dependency list (see
  * {@link parseEffekseerDependencies}). If a kept effect can't be parsed (or pulls
@@ -179,6 +183,82 @@ export async function collectReferencedNames(projectPath: string): Promise<Set<s
       collectJsStrings(refs, await readFile(file, 'utf8'));
     } catch {
       /* unreadable — skip */
+    }
+  }
+  return refs;
+}
+
+/** Plugin Command (MZ) event command code; `parameters[3]` holds its argument object. */
+const PLUGIN_COMMAND_CODE = 357;
+
+/** Add the string arguments of every Plugin Command in an event command list. */
+function collectPluginCommandArgs(refs: Set<string>, list: unknown): void {
+  if (!Array.isArray(list)) return;
+  for (const cmd of list) {
+    if (cmd?.code === PLUGIN_COMMAND_CODE && Array.isArray(cmd.parameters)) {
+      collectJsonStrings(refs, cmd.parameters[3]);
+    }
+  }
+}
+
+async function readJson(file: string): Promise<unknown> {
+  try {
+    return JSON.parse(await readFile(file, 'utf8'));
+  } catch {
+    return undefined; // missing/corrupt — skip rather than fail the export
+  }
+}
+
+/**
+ * The names that may be played as an Effekseer effect — narrower than
+ * {@link collectReferencedNames}: `Animations.json[*].effectName`, the arguments
+ * of Plugin Commands (357) in maps, common events and troops, and plugin strings
+ * (`js/plugins.js` parameters, `js/plugins/*.js` literals and `@default`s).
+ */
+export async function collectEffectReferences(projectPath: string): Promise<Set<string>> {
+  const refs = new Set<string>();
+  const dataDir = join(projectPath, 'data');
+  const animations = await readJson(join(dataDir, 'Animations.json'));
+  if (Array.isArray(animations)) {
+    for (const a of animations) if (typeof a?.effectName === 'string') addRef(refs, a.effectName);
+  }
+
+  let dataFiles: string[] = [];
+  try {
+    dataFiles = await readdir(dataDir);
+  } catch {
+    /* no data dir */
+  }
+  for (const f of dataFiles) {
+    if (/^Map\d+\.json$/.test(f)) {
+      const map = (await readJson(join(dataDir, f))) as { events?: unknown } | undefined;
+      if (!Array.isArray(map?.events)) continue;
+      for (const ev of map.events) {
+        if (Array.isArray(ev?.pages))
+          for (const page of ev.pages) collectPluginCommandArgs(refs, page?.list);
+      }
+    } else if (f === 'CommonEvents.json') {
+      const events = await readJson(join(dataDir, f));
+      if (Array.isArray(events)) for (const ev of events) collectPluginCommandArgs(refs, ev?.list);
+    } else if (f === 'Troops.json') {
+      const troops = await readJson(join(dataDir, f));
+      if (!Array.isArray(troops)) continue;
+      for (const t of troops) {
+        if (Array.isArray(t?.pages))
+          for (const page of t.pages) collectPluginCommandArgs(refs, page?.list);
+      }
+    }
+  }
+
+  const pluginFiles = [join(projectPath, 'js', 'plugins.js')];
+  for (const rel of await walk(projectPath, 'js/plugins')) {
+    if (rel.endsWith('.js')) pluginFiles.push(join(projectPath, ...rel.split('/')));
+  }
+  for (const file of pluginFiles) {
+    try {
+      collectJsStrings(refs, await readFile(file, 'utf8'));
+    } catch {
+      /* missing/unreadable — skip */
     }
   }
   return refs;
@@ -390,7 +470,7 @@ export async function exportWeb(
     }
   }
   if (refs) {
-    const effects = await pruneEffects(projectPath, refs);
+    const effects = await pruneEffects(projectPath, await collectEffectReferences(projectPath));
     files.push(...effects.kept);
     kept += effects.kept.length;
     droppedPaths.push(...effects.dropped);
@@ -452,7 +532,7 @@ export const exportToolDefinitions: ToolDefinition[] = [
   {
     name: 'export_web',
     description:
-      "Export a pruned HTML5 web deployment (for itch.io or any static host): copies index.html, js/, css/, fonts/, icon/ and data/*.json, plus only the img/audio/movies files the game references (every string in data/*.json, string literals in the core js and plugins, plugin @default annotations; img/system is always kept) and only the effects/*.efkefc Effekseer effects referenced (e.g. an animation's effectName) together with the textures/models they list internally. Writes the folder to outDir and, by default, <outDir>.zip with index.html at the archive root. Returns file/byte counts, kept/dropped asset counts (+ dropped paths), the screen size from System.advanced (the itch embed size), and warnings for itch's 1000-file / 200 MB-per-file limits. Writes nothing inside the project; outDir must be outside the project's copied folders, and an existing non-empty outDir is only replaced if it was a previous export_web output. Follow up with a playtest of the exported build.",
+      "Export a pruned HTML5 web deployment (for itch.io or any static host): copies index.html, js/, css/, fonts/, icon/ and data/*.json, plus only the img/audio/movies files the game references (every string in data/*.json, string literals in the core js and plugins, plugin @default annotations; img/system is always kept) and only the effects/*.efkefc Effekseer effects actually referenced (an animation's effectName, a Plugin Command argument, or a plugin parameter/string — not other data strings) together with the textures/models they list internally. Writes the folder to outDir and, by default, <outDir>.zip with index.html at the archive root. Returns file/byte counts, kept/dropped asset counts (+ dropped paths), the screen size from System.advanced (the itch embed size), and warnings for itch's 1000-file / 200 MB-per-file limits. Writes nothing inside the project; outDir must be outside the project's copied folders, and an existing non-empty outDir is only replaced if it was a previous export_web output. Follow up with a playtest of the exported build.",
     inputSchema: {
       outDir: z
         .string()

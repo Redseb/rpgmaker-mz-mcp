@@ -257,11 +257,52 @@ describe('export_web (integration)', () => {
     expect(result.droppedList).not.toContain('effects/Texture/Unused_Tex.png');
   });
 
-  it('copies no effects/ when no effect is referenced', async () => {
-    await put(dir, 'data/Animations.json', JSON.stringify([null, { id: 1, effectName: '' }]));
+  it('copies no effects/ when no effect is referenced, even if data names match effects', async () => {
+    // Stock effect names collide with ordinary animation/state names — those aren't references.
+    await put(
+      dir,
+      'data/Animations.json',
+      JSON.stringify([null, { id: 1, name: 'Poison', effectName: '' }, { id: 2, name: 'Heal' }]),
+    );
+    await put(dir, 'data/States.json', JSON.stringify([null, { id: 1, name: 'Blind' }]));
+    await put(dir, 'effects/Poison.efkefc', efkefc(['Texture/Poison_Tex.png']));
+    await put(dir, 'effects/Texture/Poison_Tex.png', 'tex');
+    await put(dir, 'effects/Blind.efkefc', efkefc([]));
     const result = await exportWeb(dir, { outDir: join(root, 'noeffects'), zip: false });
     expect(await readdir(join(root, 'noeffects'))).not.toContain('effects');
-    expect(result.droppedList?.filter((p) => p.startsWith('effects/')).length).toBe(6);
+    expect(result.droppedList?.filter((p) => p.startsWith('effects/')).length).toBe(9);
+  });
+
+  it('keeps effects named by an animation effectName or a Plugin Command argument', async () => {
+    await put(
+      dir,
+      'data/Animations.json',
+      JSON.stringify([null, { id: 1, name: 'Venom', effectName: 'Poison' }]),
+    );
+    await put(dir, 'effects/Poison.efkefc', efkefc(['Texture/Poison_Tex.png']));
+    await put(dir, 'effects/Texture/Poison_Tex.png', 'tex');
+    await put(dir, 'effects/Blind.efkefc', efkefc(['Texture/Blind_Tex.png']));
+    await put(dir, 'effects/Texture/Blind_Tex.png', 'tex');
+    const pluginCmd = {
+      code: 357,
+      indent: 0,
+      parameters: ['FxPlugin', 'play', '', { name: 'Blind' }],
+    };
+    await put(
+      dir,
+      'data/Map001.json',
+      JSON.stringify({ events: [null, { id: 1, pages: [{ list: [pluginCmd, { code: 0 }] }] }] }),
+    );
+    await exportWeb(dir, { outDir: join(root, 'fx'), zip: false });
+    expect((await readdir(join(root, 'fx', 'effects'))).sort()).toEqual([
+      'Blind.efkefc',
+      'Poison.efkefc',
+      'Texture',
+    ]);
+    expect((await readdir(join(root, 'fx', 'effects', 'Texture'))).sort()).toEqual([
+      'Blind_Tex.png',
+      'Poison_Tex.png',
+    ]);
   });
 
   it('parseEffekseerDependencies reads the INFO lists and rejects malformed files', () => {
