@@ -4,6 +4,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { catalogToolDefinitions } from '../src/tools/catalogTools.js';
 import { makeAutotileId } from '../src/tiles/tileCodec.js';
+import { OUTSIDE_TILE_NAMES } from '../src/tiles/catalog/outside.js';
 
 /**
  * The catalog tools load project-scoped catalogs from data/tilecatalog/
@@ -182,5 +183,108 @@ describe('catalog tools with project-scoped catalogs (integration)', () => {
     };
     const sea = res.matches.find((e) => e.name === 'Sea')!;
     expect(sea.source).toBe('builtin');
+  });
+});
+
+/**
+ * #11 — a DLC-style sheet ships a `.txt` name sidecar next to its PNG. The
+ * acceptance case: an RTP sheet's sidecar copied in under a new filename
+ * resolves with no catalog files present.
+ */
+describe('catalog tools with .txt name sidecars (integration)', () => {
+  let dir: string;
+  afterEach(async () => {
+    if (dir) await rm(dir, { recursive: true, force: true });
+  });
+
+  const SIDECAR_TILESETS = [
+    null,
+    {
+      id: 1,
+      name: 'DLC Outside',
+      mode: 0,
+      note: '',
+      tilesetNames: ['', 'Tl_Outside_A2', '', '', '', '', '', '', ''],
+      flags: [],
+    },
+  ];
+
+  /** The RTP Outside_A2 names in on-disk sidecar form: BOM, CRLF, JP half, trailing blanks. */
+  const sidecarText =
+    '\uFEFF' +
+    OUTSIDE_TILE_NAMES.Outside_A2.map((n) => `${n}|日本語`).join('\r\n') +
+    '\r\n'.repeat(25);
+
+  async function scaffoldSidecar(catalog?: object): Promise<string> {
+    const d = await mkdtemp(join(tmpdir(), 'rpgmz-sidecar-'));
+    await writeFile(join(d, 'game.rmmzproject'), 'RPGMZ 1.0.0');
+    await mkdir(join(d, 'data'));
+    await writeFile(join(d, 'data', 'System.json'), '{}');
+    await writeFile(join(d, 'data', 'Tilesets.json'), JSON.stringify(SIDECAR_TILESETS));
+    await mkdir(join(d, 'img', 'tilesets'), { recursive: true });
+    await writeFile(join(d, 'img', 'tilesets', 'Tl_Outside_A2.txt'), sidecarText);
+    if (catalog) {
+      await mkdir(join(d, 'data', 'tilecatalog'));
+      await writeFile(
+        join(d, 'data', 'tilecatalog', 'Tl_Outside_A2.json'),
+        JSON.stringify(catalog),
+      );
+    }
+    return d;
+  }
+
+  it("find_tile('grass') hits a renamed sheet via its sidecar, with no catalog files", async () => {
+    dir = await scaffoldSidecar();
+    const res = (await findTile.handler(
+      { projectPath: dir },
+      { tilesetId: 1, query: 'grass' },
+    )) as {
+      count: number;
+      matches: { name: string; sheet: string; tileId: number; source: string }[];
+    };
+    expect(res.count).toBeGreaterThan(0);
+    expect(res.matches.every((m) => m.sheet === 'Tl_Outside_A2' && m.source === 'sidecar')).toBe(
+      true,
+    );
+    const firstIdx = OUTSIDE_TILE_NAMES.Outside_A2.findIndex((n) => /grass/i.test(n));
+    const first = res.matches.find((m) => m.name === OUTSIDE_TILE_NAMES.Outside_A2[firstIdx])!;
+    expect(first.tileId).toBe(makeAutotileId(16 + firstIdx, 0));
+  });
+
+  it('get_tile_catalog summarizes the sidecar sheet as source sidecar', async () => {
+    dir = await scaffoldSidecar();
+    const res = (await getCatalog.handler({ projectPath: dir }, { tilesetId: 1 })) as {
+      cataloged: boolean;
+      sheets: { sheet: string; source: string; count: number }[];
+    };
+    expect(res.cataloged).toBe(true);
+    const expected = OUTSIDE_TILE_NAMES.Outside_A2.filter((n) => n && n !== 'Transparent').length;
+    expect(res.sheets).toEqual([
+      { sheet: 'Tl_Outside_A2', role: 'A2', source: 'sidecar', count: expected },
+    ]);
+  });
+
+  it('a manual project entry outranks the sidecar; a vision draft does not', async () => {
+    dir = await scaffoldSidecar({
+      sheet: 'Tl_Outside_A2',
+      entries: {
+        '0': { name: 'Verified Meadow', manual: true },
+        '1': { name: 'Draft Guess', manual: false, confidence: 'low' },
+      },
+    });
+    const res = (await getCatalog.handler({ projectPath: dir }, { tilesetId: 1, sheet: 'A2' })) as {
+      entries: { name: string; source: string; manual?: boolean }[];
+    };
+    expect(res.entries[0]).toMatchObject({ name: 'Verified Meadow', source: 'project' });
+    expect(res.entries[1]).toMatchObject({
+      name: OUTSIDE_TILE_NAMES.Outside_A2[1],
+      source: 'sidecar',
+    });
+    expect(res.entries.some((e) => e.name === 'Draft Guess')).toBe(false);
+
+    const summary = (await getCatalog.handler({ projectPath: dir }, { tilesetId: 1 })) as {
+      sheets: { source: string }[];
+    };
+    expect(summary.sheets[0].source).toBe('mixed');
   });
 });

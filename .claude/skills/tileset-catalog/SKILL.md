@@ -1,6 +1,6 @@
 ---
 name: tileset-catalog
-description: Bootstrap a semantic tile catalog for a custom (non-RTP) RPG Maker MZ tileset by vision. Use when a project's tileset sheets (e.g. Custom_A2.png, an unfamiliar A1–A5/B–E sheet) are NOT covered by the server's built-in catalog, so find_tile/get_tile_catalog return nothing for them and paint commands only have opaque tile ids. Slices each sheet into one labelled sample per autotile kind / flat tile, names them by sight, and writes a versioned, project-scoped catalog file. Not needed for the default Overworld tileset (World_A1/A2/B/C — already cataloged).
+description: Bootstrap a semantic tile catalog for a custom (non-RTP) RPG Maker MZ tileset by vision. Use when a project's tileset sheets (e.g. Custom_A2.png, an unfamiliar A1–A5/B–E sheet) are NOT covered by the server's built-in catalog, so find_tile/get_tile_catalog return nothing for them and paint commands only have opaque tile ids. Slices each sheet into one labelled sample per autotile kind / flat tile, names them by sight, and writes a versioned, project-scoped catalog file. Not needed for the default RPG Maker tilesets (already cataloged) or for a sheet that has a .txt name sidecar next to it in img/tilesets/ (DLC packs ship them; the server loads them automatically) — check for a .txt before running vision.
 ---
 
 # Tileset catalog bootstrap
@@ -8,8 +8,9 @@ description: Bootstrap a semantic tile catalog for a custom (non-RTP) RPG Maker 
 Give a custom tileset the same "ask for grass, get a paintable tile id" layer the
 built-in Overworld catalog provides — but for sheets the server has never seen.
 RPG Maker's default sheets ship an English `.txt` name sidecar (that's how the
-Overworld catalog was built); **custom tilesets don't**, so their names must come
-from **looking at the tiles**. This skill does that safely: it slices, you name,
+built-in catalogs were built), and so do many DLC packs — the server reads those
+automatically. **Truly custom tilesets don't**, so their names must come from
+**looking at the tiles**. This skill does that safely: it slices, you name,
 it writes a file a human verifies before it's trusted.
 
 ## When to use
@@ -34,12 +35,29 @@ those are design decisions, not perception; a human sets them later.
 Scripts live in `scripts/` next to this file and need only Node (built-in `zlib`;
 no `sharp`/`canvas`/`pngjs`). Let `SKILL=.claude/skills/tileset-catalog`.
 
+### 0. Check for a `.txt` name sidecar first
+
+Before running vision, look in `<projectPath>/img/tilesets/` for a
+**`<Sheet>.txt` next to each `<Sheet>.png`**. RPG Maker's default sheets ship one
+(one `EnglishName|日本語名` line per local index) and so do commercial DLC packs
+(e.g. `Tl_Outside_A2.png` + `Tl_Outside_A2.txt`). **The server loads these
+automatically** — `find_tile`/`get_tile_catalog` return their names with
+`source: 'sidecar'` (authoritative), no catalog file needed. So if
+`get_tile_catalog(tilesetId)` already lists a sheet with `source: 'sidecar'`,
+**skip it** — vision naming would only be slower, guessed names. Run this skill
+only for sheets with no sidecar (or to fill the indices a sidecar leaves blank).
+
+Precedence per tile: a `data/tilecatalog/` entry with `"manual": true` > the
+sidecar > a vision draft. So a human can still correct a sidecar name by adding a
+manual entry, and a vision draft never overrides a sidecar name.
+
 ### 1. Find the sheets to catalog
 
 Read the project's `data/Tilesets.json` for the target `tilesetId`; its
 `tilesetNames` array holds the 9 sheet filenames `[A1,A2,A3,A4,A5,B,C,D,E]`
 (empty string = unused slot). The image files are in `<projectPath>/img/tilesets/`.
-Catalog the non-empty sheets that aren't already covered by the built-in catalog.
+Catalog the non-empty sheets that aren't already covered by the built-in catalog
+or a `.txt` sidecar.
 
 ### 2. Slice each sheet into a labelled montage
 
@@ -127,6 +145,6 @@ local index) → tile id` identically for custom and default sheets.
   `Tilemap._addAutotile`/`_addNormalTile` (rmmz_core.js v1.7.0): A1 water/waterfall
   special layout, A2 96×144 ground blocks, A3 96×96 wall blocks, A4 alternating
   wall-top/wall-side rows, and the two-half-column flat-sheet layout.
-- **Consuming the catalog:** these files are the deliverable; wiring the MCP
-  server's `find_tile`/`get_tile_catalog` to load project-scoped catalogs from
-  `data/tilecatalog/` is a separate follow-up (the built-in catalog is compiled TS).
+- **Consuming the catalog:** the server's `find_tile`/`get_tile_catalog` load
+  `data/tilecatalog/*.json` (as `source: 'project'`) alongside the built-in
+  catalogs and any `.txt` sidecars (`source: 'sidecar'`).

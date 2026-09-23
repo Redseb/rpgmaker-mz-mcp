@@ -1,4 +1,5 @@
 import { join } from 'path';
+import { readFile } from 'fs/promises';
 import { z } from 'zod';
 import { ToolDefinition } from '../registry.js';
 import { getDataPath, readJsonFile, listFiles, fileExists } from '../utils/fileHandler.js';
@@ -7,6 +8,9 @@ import {
   catalogForTileset,
   findTiles,
   hasCatalog,
+  hasBuiltinCatalog,
+  parseTileSidecar,
+  mergeSheetOverlay,
   CatalogOverlay,
   OverlayTile,
 } from '../tiles/catalog/index.js';
@@ -80,11 +84,52 @@ async function loadProjectCatalogs(projectPath: string): Promise<CatalogOverlay 
   return Object.keys(overlay).length ? overlay : undefined;
 }
 
+/**
+ * Read a sheet's `img/tilesets/<Sheet>.txt` name sidecar, if present. RPG Maker
+ * ships one per default sheet (the built-in catalogs were generated from them)
+ * and commercial DLC packs ship the same format next to their own sheets, so a
+ * renamed/DLC sheet can be named authoritatively without the vision skill.
+ * Missing/unreadable → `undefined`.
+ */
+async function loadSidecar(
+  projectPath: string,
+  sheet: string,
+): Promise<(string | undefined)[] | undefined> {
+  try {
+    const text = await readFile(join(projectPath, 'img', 'tilesets', `${sheet}.txt`), 'utf-8');
+    const names = parseTileSidecar(text);
+    return names.length ? names : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The full catalog overlay for a tileset: project catalogs (`data/tilecatalog`)
+ * plus `.txt` sidecars for any of the tileset's sheets with no built-in catalog.
+ * Per index the precedence is manual project entry > sidecar > vision draft
+ * (see {@link mergeSheetOverlay}); a built-in sheet ignores its sidecar (the
+ * built-in names came from that same file) and a project catalog for it still
+ * replaces the built-in names wholesale, as before.
+ */
+async function loadCatalogOverlay(
+  projectPath: string,
+  tilesetNames: string[],
+): Promise<CatalogOverlay | undefined> {
+  const overlay: CatalogOverlay = { ...(await loadProjectCatalogs(projectPath)) };
+  const sheets = [...new Set(tilesetNames.filter((f) => f && !hasBuiltinCatalog(f)))];
+  for (const sheet of sheets) {
+    const sidecar = await loadSidecar(projectPath, sheet);
+    if (sidecar) overlay[sheet] = mergeSheetOverlay(sidecar, overlay[sheet]);
+  }
+  return Object.keys(overlay).length ? overlay : undefined;
+}
+
 export const catalogToolDefinitions: ToolDefinition[] = [
   {
     name: 'get_tile_catalog',
     description:
-      "Get the semantic tile catalog for a tileset: the named tiles (e.g. 'Grassland A', 'Forest', 'Sea') in each of its image sheets, each with its representative tile id and a `source` ('builtin' = RPG Maker's own labels; 'project' = a draft name from the vision-bootstrap skill). Project (custom-sheet) entries also carry the skill's `description`, `confidence` ('high'/'medium'/'low'), and `manual` (true = a human verified it) so you can gauge how trustworthy a draft name is. Autotile entries (A1–A4) return the kind's base tile id — feed it to a paint command, which recomputes the shape from neighbours. Covers the default Overworld tileset (World_A1/A2/B/C) plus any custom sheets cataloged into data/tilecatalog/ (via the tileset-catalog skill); still-uncovered sheets are omitted. **Called WITHOUT `sheet` it returns only a per-sheet index (name + entry count) to stay within the tool-output limit — a full tileset can hold thousands of named tiles. Pass `sheet` (filename 'World_A2' or slot role 'A2') to list one sheet's actual tile entries.** Sheet-filtered entries also carry `transparent` (true = the tile is see-through and needs an opaque base tile on a lower layer — painting it on layer 0 alone shows the map void; e.g. trees/objects/overlays). Read-only.",
+      "Get the semantic tile catalog for a tileset: the named tiles (e.g. 'Grassland A', 'Forest', 'Sea') in each of its image sheets, each with its representative tile id and a `source` ('builtin' = RPG Maker's own labels; 'sidecar' = authoritative names from an img/tilesets/<Sheet>.txt file shipped next to a non-default sheet, as DLC packs do; 'project' = a data/tilecatalog/ entry — a vision-bootstrap draft, or a human-verified `manual` one, which outranks a sidecar name). Project (custom-sheet) entries also carry the skill's `description`, `confidence` ('high'/'medium'/'low'), and `manual` (true = a human verified it) so you can gauge how trustworthy a draft name is. Autotile entries (A1–A4) return the kind's base tile id — feed it to a paint command, which recomputes the shape from neighbours. Covers the default RPG Maker tilesets, any non-default sheet with a .txt name sidecar in img/tilesets/ (loaded automatically), plus custom sheets cataloged into data/tilecatalog/ (via the tileset-catalog skill); still-uncovered sheets are omitted. **Called WITHOUT `sheet` it returns only a per-sheet index (name + entry count) to stay within the tool-output limit — a full tileset can hold thousands of named tiles. Pass `sheet` (filename 'World_A2' or slot role 'A2') to list one sheet's actual tile entries.** Sheet-filtered entries also carry `transparent` (true = the tile is see-through and needs an opaque base tile on a lower layer — painting it on layer 0 alone shows the map void; e.g. trees/objects/overlays). Read-only.",
     inputSchema: {
       tilesetId: z.number().int().positive().describe('Tileset id (from Tilesets.json / the map)'),
       sheet: z
@@ -96,7 +141,7 @@ export const catalogToolDefinitions: ToolDefinition[] = [
     },
     handler: async (ctx, args) => {
       const tileset = await getTileset(ctx.projectPath, args.tilesetId);
-      const overlay = await loadProjectCatalogs(ctx.projectPath);
+      const overlay = await loadCatalogOverlay(ctx.projectPath, tileset.tilesetNames);
       const cataloged = hasCatalog(tileset.tilesetNames, overlay);
       const entries = catalogForTileset(tileset.tilesetNames, args.sheet, overlay);
 
@@ -110,8 +155,11 @@ export const catalogToolDefinitions: ToolDefinition[] = [
         >();
         for (const e of entries) {
           const summary = bySheet.get(e.sheet);
-          if (summary) summary.count++;
-          else bySheet.set(e.sheet, { sheet: e.sheet, role: e.role, source: e.source, count: 1 });
+          if (summary) {
+            summary.count++;
+            // A sidecar sheet with manual project overrides mixes sources.
+            if (summary.source !== e.source) summary.source = 'mixed';
+          } else bySheet.set(e.sheet, { sheet: e.sheet, role: e.role, source: e.source, count: 1 });
         }
         return {
           tilesetId: args.tilesetId,
@@ -141,7 +189,7 @@ export const catalogToolDefinitions: ToolDefinition[] = [
   {
     name: 'find_tile',
     description:
-      "Find tiles in a tileset by a case-insensitive SUBSTRING match on their catalog name — a quick bridge from a name fragment like 'grass' or 'forest' to a paintable tile id. This is a literal substring match, NOT synonym/semantic search: 'water' matches 'Endless Waterfall' but not 'Sea' or 'Pond' (their names lack the substring). To browse the actual tile names first, use get_tile_catalog with a `sheet` filter, then search a fragment you see. Set `searchDescriptions: true` to also match the free-text description a project catalog carries (custom sheets named by the tileset-catalog skill — their names are terse, the descriptions say what the tile looks like); built-in RPG Maker entries have no description, so this only widens the search over custom sheets. Returns matching catalog entries (name, sheet, tile id, autotile kind, `source`, `matchedIn` [which fields matched], `transparent` [true = needs an opaque base on a lower layer], plus `description`/`confidence`/`manual` for project catalog drafts). Covers the default Overworld tileset plus custom sheets cataloged into data/tilecatalog/ (via the tileset-catalog skill). Read-only.",
+      "Find tiles in a tileset by a case-insensitive SUBSTRING match on their catalog name — a quick bridge from a name fragment like 'grass' or 'forest' to a paintable tile id. This is a literal substring match, NOT synonym/semantic search: 'water' matches 'Endless Waterfall' but not 'Sea' or 'Pond' (their names lack the substring). To browse the actual tile names first, use get_tile_catalog with a `sheet` filter, then search a fragment you see. Set `searchDescriptions: true` to also match the free-text description a project catalog carries (custom sheets named by the tileset-catalog skill — their names are terse, the descriptions say what the tile looks like); built-in RPG Maker entries have no description, so this only widens the search over custom sheets. Returns matching catalog entries (name, sheet, tile id, autotile kind, `source`, `matchedIn` [which fields matched], `transparent` [true = needs an opaque base on a lower layer], plus `description`/`confidence`/`manual` for project catalog drafts). Covers the default RPG Maker tilesets, non-default sheets with a .txt name sidecar in img/tilesets/ (DLC packs ship these; loaded automatically, `source: 'sidecar'`), plus custom sheets cataloged into data/tilecatalog/ (via the tileset-catalog skill). Read-only.",
     inputSchema: {
       tilesetId: z.number().int().positive().describe('Tileset id (from Tilesets.json / the map)'),
       query: z
@@ -156,7 +204,7 @@ export const catalogToolDefinitions: ToolDefinition[] = [
     },
     handler: async (ctx, args) => {
       const tileset = await getTileset(ctx.projectPath, args.tilesetId);
-      const overlay = await loadProjectCatalogs(ctx.projectPath);
+      const overlay = await loadCatalogOverlay(ctx.projectPath, tileset.tilesetNames);
       const matches = findTiles(tileset.tilesetNames, args.query, overlay, {
         searchDescriptions: args.searchDescriptions === true,
       });

@@ -4,6 +4,9 @@ import {
   catalogForTileset,
   findTiles,
   hasCatalog,
+  hasBuiltinCatalog,
+  parseTileSidecar,
+  mergeSheetOverlay,
 } from '../src/tiles/catalog/index.js';
 import { TILE_ID, makeAutotileId, getAutotileKind, isAutotile } from '../src/tiles/tileCodec.js';
 
@@ -251,5 +254,54 @@ describe('project-catalog overlay', () => {
     expect(grass.description).toBeUndefined();
     expect(grass.confidence).toBeUndefined();
     expect('manual' in grass).toBe(false);
+  });
+});
+
+describe('tileset .txt name sidecars (#11)', () => {
+  it('parses Name|JP lines, stripping a BOM, CRLF, and trailing blank lines', () => {
+    const text = '\uFEFFGrass|草原\r\nTransparent|透明\r\n\r\nDirt|土\r\n\r\n\r\n\r\n';
+    expect(parseTileSidecar(text)).toEqual(['Grass', 'Transparent', undefined, 'Dirt']);
+  });
+
+  it('accepts a line with no Japanese half and trims whitespace', () => {
+    expect(parseTileSidecar('  Sand  \nRock|岩')).toEqual(['Sand', 'Rock']);
+    expect(parseTileSidecar('\n\n')).toEqual([]);
+  });
+
+  it('knows which sheets are built in', () => {
+    expect(hasBuiltinCatalog('World_A2')).toBe(true);
+    expect(hasBuiltinCatalog('Tl_Outside_A2')).toBe(false);
+    expect(hasBuiltinCatalog('toString')).toBe(false); // no prototype leakage
+  });
+
+  it('merges by precedence: manual project > sidecar > vision draft', () => {
+    const merged = mergeSheetOverlay(
+      ['Grass', 'Dirt', undefined, 'Transparent'],
+      [
+        { name: 'Verified Lawn', manual: true },
+        { name: 'Draft Mud', manual: false, confidence: 'low' },
+        { name: 'Draft Stone' },
+        { name: 'Draft Void' },
+        { name: 'Draft Extra' },
+      ],
+    );
+    expect(merged.map((t) => t && [t.name, t.source])).toEqual([
+      ['Verified Lawn', 'project'], // manual beats sidecar
+      ['Dirt', 'sidecar'], // sidecar beats draft
+      ['Draft Stone', 'project'], // draft fills a sidecar hole
+      ['Transparent', 'sidecar'], // an authoritative Transparent is not papered over
+      ['Draft Extra', 'project'], // draft past the sidecar's end
+    ]);
+  });
+
+  it('resolves sidecar entries tagged sidecar, skipping Transparent and capping by slot', () => {
+    const CUSTOM = ['', 'Tl_Outside_A2', '', '', '', '', '', '', ''];
+    const names = Array.from({ length: 40 }, (_, i) => (i === 1 ? 'Transparent' : `Tile ${i}`));
+    const overlay = { Tl_Outside_A2: mergeSheetOverlay(names, undefined) };
+    const entries = catalogForTileset(CUSTOM, undefined, overlay);
+    expect(entries).toHaveLength(31); // 32-kind A2 cap, minus the Transparent slot
+    expect(entries.every((e) => e.source === 'sidecar')).toBe(true);
+    expect(entries[0]).toMatchObject({ name: 'Tile 0', tileId: makeAutotileId(16, 0), kind: 16 });
+    expect(entries.some((e) => e.name === 'Tile 32')).toBe(false);
   });
 });
