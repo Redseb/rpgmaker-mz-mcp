@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Why I gave Claude RPG Maker instead of a blank repo · rpgmaker-mz-mcp</title>
+<meta name="description" content="An MCP server that lets Claude build RPG Maker MZ games, and why a limited engine is the whole point.">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Why I gave Claude RPG Maker instead of a blank repo">
+<meta property="og:description" content="An MCP server that lets Claude build RPG Maker MZ games, and why a limited engine is the whole point.">
+<meta property="og:url" content="https://redseb.github.io/rpgmaker-mz-mcp/">
+<meta property="og:image" content="https://redseb.github.io/rpgmaker-mz-mcp/media/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://redseb.github.io/rpgmaker-mz-mcp/media/og.jpg">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='3' fill='%230a0c1d'/><rect x='4' y='4' width='8' height='8' fill='%23e94560'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter+Tight:ital,wght@0,400;0,500;0,700;0,800;1,400&family=JetBrains+Mono:wght@400;600&family=Tiny5&display=swap" rel="stylesheet">
+<style>
+:root {
+  color-scheme: dark;
+  --bg: #0a0c1d; --bg2: #12163a; --panel: #0f1230;
+  --ink: #f5f1ea; --dim: rgba(245,241,234,.68); --faint: rgba(245,241,234,.14);
+  --red: #e94560; --peach: #ff9e6d; --teal: #3fd0b0; --gold: #f2c14e;
+  --grad: linear-gradient(90deg, var(--peach), var(--red));
+  --sans: "Inter Tight", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, monospace;
+  --pix: "Tiny5", var(--mono);
+  --col: 680px; --wide: 960px;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 400 19px/1.7 var(--sans);
+  background-image: radial-gradient(1200px 600px at 50% -200px, var(--bg2), transparent 70%);
+  background-repeat: no-repeat;
+}
+a { color: var(--peach); text-underline-offset: 3px; }
+a:hover { color: var(--red); }
+::selection { background: var(--red); color: var(--ink); }
+
+/* top bar */
+.bar { display: flex; justify-content: space-between; align-items: center;
+  max-width: var(--wide); margin: 0 auto; padding: 20px 16px; }
+.brand { font: 400 15px var(--pix); letter-spacing: .12em; color: var(--ink); text-decoration: none; }
+.brand b { font-weight: 400; background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.gh { font: 600 14px var(--mono); color: var(--dim); text-decoration: none;
+  border: 1px solid var(--faint); border-radius: 999px; padding: 6px 14px; }
+.gh:hover { color: var(--ink); border-color: var(--dim); }
+
+/* layout */
+.col { max-width: calc(var(--col) + 32px); margin: 0 auto; padding: 0 16px; }
+.wide { max-width: calc(var(--wide) + 32px); margin: 0 auto; padding: 0 16px; }
+
+/* hero */
+header.hero { padding: 56px 16px 32px; }
+.kicker { font: 400 14px var(--pix); letter-spacing: .22em; color: var(--peach); margin: 0 0 18px; }
+h1 { font: 800 clamp(36px, 6.4vw, 60px)/1.06 var(--sans); letter-spacing: -.025em; margin: 0 0 20px; }
+h1 .g { background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.dek { font-size: 21px; color: var(--dim); margin: 0 0 24px; }
+.meta { font: 400 13px var(--mono); color: var(--dim); display: flex; gap: 10px; flex-wrap: wrap; }
+.meta span + span::before { content: "·"; margin-right: 10px; color: var(--faint); }
+
+/* media */
+figure { margin: 40px auto; }
+figure.wide { max-width: calc(var(--wide) + 32px); margin: 48px auto; }
+.grid + article, figure.wide + article { margin-top: 8px; }
+.frame { border-radius: 12px; overflow: hidden; border: 1px solid var(--faint);
+  background: #000; box-shadow: 0 24px 60px -20px rgba(0,0,0,.7); }
+.frame img, .frame video { display: block; width: 100%; height: auto; }
+.pixel img { image-rendering: pixelated; }
+figcaption { font-size: 14px; line-height: 1.5; color: var(--dim); margin-top: 12px; text-align: center; }
+figcaption b { font: 400 12px var(--pix); letter-spacing: .14em; color: var(--ink); margin-right: 6px; }
+.grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; margin-bottom: 48px; }
+.grid figure { margin: 0; }
+@media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
+
+/* prose */
+article h2 { font: 800 32px/1.15 var(--sans); letter-spacing: -.02em; margin: 72px 0 20px; }
+article h2 .n { font: 400 14px var(--pix); letter-spacing: .2em; color: var(--red); display: block; margin-bottom: 10px; }
+article h3 { font: 700 22px/1.3 var(--sans); margin: 40px 0 12px; }
+article p { margin: 0 0 22px; }
+article strong { color: var(--ink); font-weight: 700; }
+.lede { font-size: 22px; line-height: 1.6; }
+blockquote.pull { margin: 32px 0; padding: 4px 0 4px 20px; border-left: 3px solid; border-image: var(--grad) 1;
+  font: 700 24px/1.4 var(--sans); }
+.points { list-style: none; padding: 0; margin: 28px 0; display: grid; gap: 14px; }
+.points li { background: var(--panel); border: 1px solid var(--faint); border-radius: 10px; padding: 16px 20px; }
+.points li strong { display: block; color: var(--peach); margin-bottom: 4px; }
+.prompt { font-style: italic; color: var(--ink); }
+
+/* code */
+code { font: 400 .84em var(--mono); background: var(--panel); border: 1px solid var(--faint);
+  border-radius: 5px; padding: 1px 6px; }
+pre { position: relative; font: 400 14.5px/1.65 var(--mono); background: var(--panel); border: 1px solid var(--faint);
+  border-radius: 10px; padding: 44px 20px 18px; overflow-x: auto; margin: 28px 0; }
+pre code { background: none; border: 0; padding: 0; font-size: inherit; }
+pre::before { content: ""; position: absolute; top: 16px; left: 18px; width: 10px; height: 10px; border-radius: 50%;
+  background: var(--red); box-shadow: 16px 0 0 var(--gold), 32px 0 0 var(--teal); }
+pre .t { position: absolute; top: 11px; right: 16px; font: 400 12px var(--mono); color: var(--dim); }
+.k { color: var(--peach); } .s { color: var(--teal); } .num { color: var(--gold); } .c { color: var(--dim); }
+.copy { position: absolute; top: 8px; right: 10px; font: 600 12px var(--mono); color: var(--dim); background: transparent;
+  border: 1px solid var(--faint); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+.copy:hover { color: var(--ink); border-color: var(--dim); }
+
+/* try it */
+.try { margin: 80px auto 0; padding: 40px 0 8px; border-top: 1px solid var(--faint); }
+.cta { display: inline-block; font: 700 17px var(--sans); color: var(--bg); background: var(--grad);
+  border-radius: 999px; padding: 12px 24px; text-decoration: none; margin-top: 4px; }
+.cta:hover { color: var(--bg); filter: brightness(1.08); }
+footer { max-width: var(--wide); margin: 80px auto 0; padding: 28px 16px 48px; border-top: 1px solid var(--faint);
+  display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; font: 400 13px var(--mono); color: var(--dim); }
+footer a { color: var(--dim); }
+</style>
+</head>
+<body>
+
+<nav class="bar">
+  <a class="brand" href="https://github.com/Redseb/rpgmaker-mz-mcp">RPG MAKER MZ <b>MCP</b></a>
+  <a class="gh" href="https://github.com/Redseb/rpgmaker-mz-mcp">GitHub →</a>
+</nav>
+
+<header class="hero col">
+  <p class="kicker">RPG MAKER MZ · MCP SERVER</p>
+  <h1>Why I gave Claude <span class="g">RPG Maker</span> instead of a blank repo</h1>
+  <p class="dek">An MCP server that lets Claude build RPG Maker MZ games, and why a limited engine is the whole point.</p>
+  <div class="meta"><span>Miko Zyzanski</span><span>5 min read</span></div>
+</header>
+
+<figure class="wide">
+  <div class="frame"><video src="media/release.mp4" poster="media/poster.jpg" controls playsinline preload="none"></video></div>
+  <figcaption>The release video. Every game shown is an example Claude built with the server; none of them are released.</figcaption>
+</figure>
+
+<article class="col">
+
+<p class="lede">I built <a href="https://github.com/Redseb/rpgmaker-mz-mcp">rpgmaker-mz-mcp</a>, an MCP server that gives Claude direct access to an RPG Maker MZ project: the database, maps, tiles, events and dialogue. It has 128 tools. With them Claude can create a skill, paint a town, place an NPC and wire up a quest. It can then boot the game headlessly and play through what it just built to check it works.</p>
+
+<h2><span class="n">01</span>Why RPG Maker?</h2>
+
+<blockquote class="pull">RPG Maker is a limited engine, and that's exactly why it works.</blockquote>
+
+<p>Ask an AI to build an RPG from scratch and it has to invent everything before it gets to the fun part: rendering, input, a save system, menus, message windows, inventory, and the battle system with its damage formulas, turn order and status effects. Every one of those is a place for bugs to hide. Every vibe-coded game also ends up built differently, so nobody, you or the next session of Claude, has a map of how it fits together.</p>
+
+<p>RPG Maker has already made those decisions. The battle system, menus, saving, shops, inventory, random encounters and event scripting all exist, and plenty of games have shipped on them. That changes the job for Claude in three ways:</p>
+
+<ul class="points">
+  <li><strong>Filling in data instead of writing an engine</strong>A game is mostly records: this actor has this class, this skill does this damage, this map has this event on this tile. Claude writes those records, and the engine already knows how to run them.</li>
+  <li><strong>Output that can be checked</strong>Because everything is structured data, the server can validate it. It catches a skill pointing to a state that doesn't exist, an event with a malformed command list, or a transfer to a missing map, and refuses the write. For what validation can't catch, Claude boots the game headlessly and plays it.</li>
+  <li><strong>Every game has the same shape</strong>Maps, events and the database work the same way in every RPG Maker project. Claude doesn't have to learn a new codebase for each game, and neither do you.</li>
+</ul>
+
+<p>The constraint is the feature. With less to invent, Claude spends its effort on the parts that make a game yours: the world, the story and the encounters.</p>
+
+<p>Here is what that looks like in practice. These are all example games Claude built with the server:</p>
+
+</article>
+
+<figure class="wide">
+  <div class="frame pixel"><img src="media/overworld.jpg" alt="A retro-style overworld with a golden tower above a forest path" width="960" height="540" loading="lazy"></div>
+  <figcaption><b>OVERWORLD</b>A retro-style adventure. Claude painted every map.</figcaption>
+</figure>
+
+<figure class="wide">
+  <div class="frame"><img src="media/village-dialogue.jpg" alt="A village with a character speaking in a dialogue box" width="960" height="540" loading="lazy"></div>
+  <figcaption><b>VILLAGE</b>Claude wrote the maps, cast and dialogue.</figcaption>
+</figure>
+
+<div class="wide grid">
+  <figure>
+    <div class="frame pixel"><img src="media/retro-battle.jpg" alt="A retro-style battle against a golem" width="816" height="624" loading="lazy"></div>
+    <figcaption><b>BATTLE</b>RPG Maker's own battle system. Nobody had to write it.</figcaption>
+  </figure>
+  <figure>
+    <div class="frame"><img src="media/boss-battle.jpg" alt="A boss battle against an armored knight casting fire" width="816" height="624" loading="lazy"></div>
+    <figcaption><b>BOSS</b>A boss Claude designed, from stats to skills.</figcaption>
+  </figure>
+</div>
+
+<article class="col">
+
+<h2><span class="n">02</span>How to work with it</h2>
+
+<p>After using it for a while, I've found two quite different ways to work with it.</p>
+
+<h3>As a precise tool</h3>
+
+<p>Sometimes you know exactly what you want but don't want to click through the setup yourself. Say you ask for <span class="prompt">"a potion that restores 20 HP but drains 20 MP."</span> In the editor that means opening the Items tab, adding two effects, entering the values and picking a scope. Through the MCP, Claude turns your sentence into one call:</p>
+
+<pre><span class="t">create_item</span><code>{
+  <span class="k">"name"</span>: <span class="s">"Bloodwine Tonic"</span>,
+  <span class="k">"description"</span>: <span class="s">"Restores 20 HP. Drains 20 MP."</span>,
+  <span class="k">"scope"</span>: <span class="num">7</span>,
+  <span class="k">"price"</span>: <span class="num">60</span>,
+  <span class="k">"effects"</span>: [
+    <span class="c">// Recover HP +20</span>
+    { <span class="k">"code"</span>: <span class="num">11</span>, <span class="k">"dataId"</span>: <span class="num">0</span>, <span class="k">"value1"</span>: <span class="num">0</span>, <span class="k">"value2"</span>: <span class="num">20</span> },
+    <span class="c">// Recover MP −20 (a negative value drains)</span>
+    { <span class="k">"code"</span>: <span class="num">12</span>, <span class="k">"dataId"</span>: <span class="num">0</span>, <span class="k">"value1"</span>: <span class="num">0</span>, <span class="k">"value2"</span>: <span class="num">-20</span> }
+  ]
+}</code></pre>
+
+<p>The same works for a class's EXP curve, a boss fight's mid-battle event, or a conversation that branches on a switch. You stay the designer and Claude does the data entry.</p>
+
+<h3>As a collaborator with free rein</h3>
+
+<p>Or you can hand over more: <span class="prompt">"Create a side quest in the village. A scholar lost her journal in the crypt, and the reward is a ring."</span> Claude then paints the crypt, places the chest, writes the dialogue, sets up the switches so the quest can only complete once, and adds the ring to the database. Then it plays through the quest to check it.</p>
+
+<p>Push further and you get entire games like the ones above. The same 128 tools cover both ends, so you can switch between a single potion and a whole quest in the middle of a conversation.</p>
+
+<h2><span class="n">03</span>No asset generation</h2>
+
+<p><strong>The server doesn't generate any art or music.</strong> It uses what RPG Maker already has: the default assets plus the large library of official asset packs on Steam, covering tilesets, characters, battlers and music. DLC packs ship with tile-name files, which the server reads. That lets Claude ask for <code>"grass"</code> or <code>"stone wall"</code> by name instead of guessing tile IDs.</p>
+
+<p>So there's no generated art, no clashing styles, and one less thing for Claude to worry about. You choose the look by choosing the packs, and Claude works with them.</p>
+
+<h2><span class="n">04</span>You can always take the wheel</h2>
+
+<p>To me this is the biggest win.</p>
+
+<p>A fully vibe-coded game is a pile of code you didn't write. To change one line of dialogue, you first have to find where dialogue lives, then hope your change doesn't break something else. What this server produces is just an ordinary RPG Maker project. Open it in the editor and everything is where you'd expect it to be.</p>
+
+</article>
+
+<figure class="wide">
+  <div class="frame"><video class="loop" src="media/editor-paint-tiles.mp4" poster="media/editor-paint-tiles.jpg" muted loop playsinline preload="none"></video></div>
+  <figcaption><b>PAINT</b>Paint over a corner of the map.</figcaption>
+</figure>
+<figure class="wide">
+  <div class="frame"><video class="loop" src="media/editor-edit-text.mp4" poster="media/editor-edit-text.jpg" muted loop playsinline preload="none"></video></div>
+  <figcaption><b>WRITE</b>Reword a line of dialogue.</figcaption>
+</figure>
+<figure class="wide">
+  <div class="frame"><video class="loop" src="media/editor-database.mp4" poster="media/editor-database.jpg" muted loop playsinline preload="none"></video></div>
+  <figcaption><b>TUNE</b>Tweak a class's EXP curve.</figcaption>
+</figure>
+
+<article class="col">
+
+<p>Then save, go back to Claude and carry on. The server reads the project fresh on every call, so Claude builds on your changes instead of overwriting them. However much Claude builds, the game stays something you understand and can edit yourself.</p>
+
+<section class="try">
+  <h2 style="margin-top:0"><span class="n">TRY IT</span>Start with a potion, or a whole quest</h2>
+  <p>In Claude Code, this installs the server and its authoring skills:</p>
+<pre><button class="copy" type="button">Copy</button><code>claude plugin marketplace add Redseb/rpgmaker-mz-mcp
+claude plugin install rpgmaker-mz@rpgmaker-mz-mcp</code></pre>
+  <p>Any other MCP client can run <code>npx -y rpgmaker-mz-mcp@latest</code> with <code>RPGMAKER_PROJECT_PATH</code> set to your project.</p>
+  <a class="cta" href="https://github.com/Redseb/rpgmaker-mz-mcp">View on GitHub →</a>
+</section>
+
+</article>
+
+<footer>
+  <span>rpgmaker-mz-mcp · MIT</span>
+  <span><a href="https://github.com/Redseb/rpgmaker-mz-mcp">GitHub</a> · <a href="https://www.npmjs.com/package/rpgmaker-mz-mcp">npm</a></span>
+</footer>
+
+<script>
+// Editor loops play only while on screen.
+const io = new IntersectionObserver((entries) => {
+  for (const e of entries) {
+    if (e.isIntersecting) e.target.play().catch(() => {});
+    else e.target.pause();
+  }
+}, { threshold: 0.35 });
+document.querySelectorAll('video.loop').forEach((v) => io.observe(v));
+
+document.querySelectorAll('.copy').forEach((btn) => {
+  btn.addEventListener('click', async () => {
+    const text = btn.parentElement.querySelector('code').innerText;
+    try { await navigator.clipboard.writeText(text); btn.textContent = 'Copied'; }
+    catch { btn.textContent = 'Select to copy'; }
+    setTimeout(() => (btn.textContent = 'Copy'), 1600);
+  });
+});
+</script>
+</body>
+</html>
