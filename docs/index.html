@@ -369,6 +369,46 @@
         color: var(--bg);
         filter: brightness(1.08);
       }
+      .cta.ghost {
+        color: var(--ink);
+        background: transparent;
+        border: 1px solid var(--faint);
+      }
+      .ctas {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+      .cta.ghost:hover {
+        color: var(--ink);
+        border-color: var(--dim);
+      }
+
+      /* playable demo */
+      .demo {
+        margin: 56px auto 0;
+        padding: 28px 28px 30px;
+        border-radius: 14px;
+        background:
+          linear-gradient(var(--panel), var(--panel)) padding-box,
+          var(--grad) border-box;
+        border: 1px solid transparent;
+      }
+      .demo .kicker {
+        margin-bottom: 10px;
+      }
+      .demo h3 {
+        font: 800 28px/1.2 var(--sans);
+        letter-spacing: -0.02em;
+        margin: 0 0 12px;
+      }
+      .demo p {
+        margin: 0 0 20px;
+        color: var(--dim);
+      }
+      .demo p strong {
+        color: var(--ink);
+      }
       footer {
         max-width: var(--wide);
         margin: 80px auto 0;
@@ -413,8 +453,7 @@
         ></video>
       </div>
       <figcaption>
-        The release video. Every game shown is an example Claude built with the server; none of them
-        are released.
+        The release video. Every game shown is an example Claude built with the server.
       </figcaption>
     </figure>
 
@@ -531,6 +570,17 @@
     </div>
 
     <article class="col">
+      <aside class="demo">
+        <p class="kicker">PLAYABLE DEMO</p>
+        <h3>Play one in your browser</h3>
+        <p>
+          <strong>The Hundredth Dawn</strong> is a proof of concept: Opus 5.5 built it in one shot
+          with the server, to see how far that gets. It's hard, and it hasn't been playtested start
+          to finish, so expect rough edges.
+        </p>
+        <a class="cta" href="https://mechseb.itch.io/the-hundredth-dawn">Play on itch.io →</a>
+      </aside>
+
       <h2><span class="n">02</span>How to work with it</h2>
 
       <p>After using it for a while, I've found two quite different ways to work with it.</p>
@@ -670,7 +720,10 @@ claude plugin install rpgmaker-mz@rpgmaker-mz-mcp</code></pre>
           Any other MCP client can run <code>npx -y rpgmaker-mz-mcp@latest</code> with
           <code>RPGMAKER_PROJECT_PATH</code> set to your project.
         </p>
-        <a class="cta" href="https://github.com/Redseb/rpgmaker-mz-mcp">View on GitHub →</a>
+        <div class="ctas">
+          <a class="cta" href="https://github.com/Redseb/rpgmaker-mz-mcp">View on GitHub →</a>
+          <a class="cta ghost" href="https://mechseb.itch.io/the-hundredth-dawn">Play the demo</a>
+        </div>
       </section>
     </article>
 
