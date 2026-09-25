@@ -6,7 +6,7 @@
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "rpgmaker-mz-mcp": "./dist/index.js"
+    "rpgmaker-mz-mcp": "dist/index.js"
   },
   "files": [
     "dist"
