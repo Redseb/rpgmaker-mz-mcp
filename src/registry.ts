@@ -19,6 +19,8 @@ export interface ToolContext {
    * a `progress` that doesn't increase is dropped, as the spec requires.
    */
   reportProgress?: (progress: number, total?: number, message?: string) => void;
+  /** Request cancellation or server shutdown; headless tools close their owned resources. */
+  signal?: AbortSignal;
 }
 
 /**

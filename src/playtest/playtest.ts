@@ -382,7 +382,7 @@ async function runStep(
       return { path };
     }
     case 'eval': {
-      const value = await s.page.evaluate(step.script);
+      const value = await s.evaluate(step.script);
       return { value: value === undefined ? null : value };
     }
   }
@@ -430,6 +430,8 @@ export async function runPlaytest(
     onProgress?: (progress: number, total: number, message: string) => void;
     /** Play battles at real-time speed instead of fast-forwarding them (`BATTLE_SPEED`). */
     realtime?: boolean;
+    /** Cancel this call without affecting other playtests. */
+    signal?: AbortSignal;
   } = {},
 ): Promise<PlaytestResult> {
   const preflight = checkSteps(steps);
@@ -445,7 +447,7 @@ export async function runPlaytest(
   const progress = progressTicker(opts.onProgress, steps.length + 1);
   try {
     progress.phase(0, 'Booting the game');
-    const session = await openSession(projectPath);
+    const session = await openSession(projectPath, { signal: opts.signal });
     try {
       await session.call('setBattleSpeed', battleSpeedFor(opts));
       for (let index = 0; index < steps.length; index++) {

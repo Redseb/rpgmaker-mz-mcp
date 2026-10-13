@@ -13,13 +13,13 @@ import { playtestSteps, MAX_STEPS } from '../playtest/steps.js';
  */
 
 const REQUIREMENTS =
-  'Needs the optional dependency playwright-core and a Chromium from the Playwright cache (`npx playwright install chromium-headless-shell`) or the RPGMAKER_MCP_CHROMIUM env var.';
+  'Needs Node.js 20+, the optional dependency playwright-core and a Chromium from the Playwright cache (`npx playwright install chromium-headless-shell`) or the RPGMAKER_MCP_CHROMIUM env var.';
 
 const inlineArg = z
   .boolean()
   .optional()
   .describe(
-    'Also return the PNG(s) as image content in the response (default false: paths only — read the file to view it).',
+    'Also return up to 8 PNGs / 24 MiB total as image content (default false: paths only). Omitted images remain available at their returned file paths.',
   );
 
 export const playtestToolDefinitions: ToolDefinition[] = [
@@ -73,6 +73,7 @@ export const playtestToolDefinitions: ToolDefinition[] = [
         switches: args.switches,
         runEvents: args.runEvents,
         out: args.out,
+        signal: ctx.signal,
       }),
     images: (result, args) => (args.inline ? [(result as RenderMapResult).path] : []),
   },
@@ -111,6 +112,7 @@ export const playtestToolDefinitions: ToolDefinition[] = [
         out: args.out,
         onProgress: ctx.reportProgress,
         realtime: args.realtime,
+        signal: ctx.signal,
       }),
     images: (result, args) => (args.inline ? (result as PlaytestResult).screenshots : []),
   },

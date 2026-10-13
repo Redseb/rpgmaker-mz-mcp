@@ -28,6 +28,11 @@ type PlaywrightModule = typeof import('playwright-core');
  * server — only these tools, with a message that says how to fix it.
  */
 export async function loadPlaywright(): Promise<PlaywrightModule> {
+  if (Number(process.versions.node.split('.')[0]) < 20) {
+    throw new Error(
+      'Headless rendering requires Node.js 20 or newer for playwright-core; the other tools remain available on Node.js 18.',
+    );
+  }
   try {
     const mod = (await import('playwright-core')) as PlaywrightModule & {
       default?: PlaywrightModule;
@@ -48,11 +53,20 @@ export interface EngineSession {
   problems: string[];
   /** Evaluate `__mcp.<fn>(...args)` in the page. */
   call: <T = unknown>(fn: string, ...args: unknown[]) => Promise<T>;
+  /** Evaluate page JavaScript with request/server cancellation. */
+  evaluate: <T = unknown>(script: string) => Promise<T>;
   /** Poll `__mcp.<fn>(...args)` until truthy, or throw `what` after `timeoutMs`. */
   waitFor: (what: string, fn: string, args?: unknown[], timeoutMs?: number) => Promise<void>;
   /** Tap a virtual button (`ok`, `cancel`, `down`, …) by toggling engine input state. */
   press: (button: string, holdMs?: number) => Promise<void>;
   close: () => Promise<void>;
+}
+
+const activeSessions = new Set<{ close: () => Promise<void> }>();
+
+/** Close only the browsers and static servers this process owns. */
+export async function stopHeadlessSessions(): Promise<void> {
+  await Promise.allSettled([...activeSessions].map((session) => session.close()));
 }
 
 /** Build the page-side expression `__mcp.fn(<json args>)`. */
@@ -63,16 +77,69 @@ export function driverCall(fn: string, args: unknown[]): string {
 
 export async function openSession(
   projectPath: string,
-  opts: { viewport?: { width: number; height: number }; bootTimeoutMs?: number } = {},
+  opts: {
+    viewport?: { width: number; height: number };
+    bootTimeoutMs?: number;
+    signal?: AbortSignal;
+  } = {},
 ): Promise<EngineSession> {
-  const playwright = await loadPlaywright();
-  const executablePath = findChromium();
   let server: StaticServer | undefined;
   let browser: Browser | undefined;
+  let cancelled = false;
+  const cancelledError = new Error('Headless session cancelled or closed.');
+  if (opts.signal?.aborted) throw cancelledError;
+  let rejectCancellation: (error: Error) => void = () => undefined;
+  const cancellation = new Promise<never>((_resolve, reject) => {
+    rejectCancellation = reject;
+  });
+  // An idle session can be closed without a pending evaluation to reject.
+  void cancellation.catch(() => undefined);
+  const race = <T>(pending: Promise<T>): Promise<T> => Promise.race([pending, cancellation]);
+  const startups: Promise<unknown>[] = [];
+  const acquire = <T extends { close: () => Promise<void> }>(
+    pending: Promise<T>,
+    remember: (resource: T) => void,
+  ): Promise<T> => {
+    const tracked = pending.then(async (resource) => {
+      // Cancellation can arrive while Chromium or the HTTP listener is starting.
+      if (cancelled) {
+        await resource.close().catch(() => undefined);
+        throw cancelledError;
+      }
+      remember(resource);
+      return resource;
+    });
+    startups.push(tracked);
+    return race(tracked);
+  };
+  let closing: Promise<void> | undefined;
+  const close = (): Promise<void> => {
+    if (closing) return closing;
+    cancelled = true;
+    rejectCancellation(cancelledError);
+    opts.signal?.removeEventListener('abort', onAbort);
+    closing = (async () => {
+      // Also drain late startup results: shutdown must not leave a new browser behind.
+      await Promise.allSettled(startups);
+      await browser?.close().catch(() => undefined);
+      await server?.close().catch(() => undefined);
+      activeSessions.delete(active);
+    })();
+    return closing;
+  };
+  const onAbort = () => void close();
+  const active = { close };
+  activeSessions.add(active);
+  opts.signal?.addEventListener('abort', onAbort, { once: true });
   try {
-    server = await startStaticServer(projectPath);
-    browser = await playwright.chromium.launch({ executablePath, args: CHROMIUM_ARGS });
-    const page = await browser.newPage({ viewport: opts.viewport ?? DEFAULT_VIEWPORT });
+    const playwright = await race(loadPlaywright());
+    const executablePath = findChromium();
+    const srv = await acquire(startStaticServer(projectPath), (value) => (server = value));
+    const brw = await acquire(
+      playwright.chromium.launch({ executablePath, args: CHROMIUM_ARGS }),
+      (value) => (browser = value),
+    );
+    const page = await race(brw.newPage({ viewport: opts.viewport ?? DEFAULT_VIEWPORT }));
     const problems: string[] = [];
     page.on('console', (m) => {
       // The browser's own "Failed to load resource" line duplicates the HTTP
@@ -87,17 +154,21 @@ export async function openSession(
         problems.push(`[HTTP ${r.status()}] ${decodeURIComponent(new URL(r.url()).pathname)}`);
       }
     });
-    await page.addInitScript({ content: ENGINE_DRIVER });
+    await race(page.addInitScript({ content: ENGINE_DRIVER }));
 
-    const call = <T>(fn: string, ...args: unknown[]): Promise<T> =>
-      page.evaluate(driverCall(fn, args)) as Promise<T>;
+    const evaluate = <T>(script: string): Promise<T> =>
+      cancelled ? Promise.reject(cancelledError) : (race(page.evaluate(script)) as Promise<T>);
+    const call = <T>(fn: string, ...args: unknown[]): Promise<T> => evaluate(driverCall(fn, args));
     const waitFor = async (what: string, fn: string, args: unknown[] = [], timeoutMs = 20000) => {
       try {
-        await page.waitForFunction(driverCall(fn, args), undefined, {
-          timeout: timeoutMs,
-          polling: 50,
-        });
+        await race(
+          page.waitForFunction(driverCall(fn, args), undefined, {
+            timeout: timeoutMs,
+            polling: 50,
+          }),
+        );
       } catch (e) {
+        if (cancelled) throw cancelledError;
         const reason = e instanceof Error ? e.message.split('\n')[0] : String(e);
         const recent = problems.slice(-5).join(' | ');
         throw new Error(
@@ -107,32 +178,27 @@ export async function openSession(
     };
     const press = async (button: string, holdMs = 60) => {
       const b = JSON.stringify(button);
-      await page.evaluate(`Input._currentState[${b}] = true`);
-      await page.waitForTimeout(holdMs);
-      await page.evaluate(`Input._currentState[${b}] = false`);
-      await page.waitForTimeout(60);
+      await evaluate(`Input._currentState[${b}] = true`);
+      await race(page.waitForTimeout(holdMs));
+      await evaluate(`Input._currentState[${b}] = false`);
+      await race(page.waitForTimeout(60));
     };
 
-    await page.goto(`${server.origin}/index.html`);
+    await race(page.goto(`${srv.origin}/index.html`));
     await waitFor('the game to boot', 'booted', [], opts.bootTimeoutMs ?? 30000);
     await call('init');
 
-    const srv = server;
-    const brw = browser;
     return {
       page,
       problems,
       call,
+      evaluate,
       waitFor,
       press,
-      close: async () => {
-        await brw.close().catch(() => undefined);
-        await srv.close();
-      },
+      close,
     };
   } catch (e) {
-    await browser?.close().catch(() => undefined);
-    await server?.close();
+    await close();
     throw e;
   }
 }

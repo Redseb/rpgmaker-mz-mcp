@@ -9,7 +9,8 @@
     "rpgmaker-mz-mcp": "dist/index.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "THIRD_PARTY_NOTICES.md"
   ],
   "engines": {
     "node": ">=18"

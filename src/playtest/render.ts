@@ -28,6 +28,7 @@ export interface RenderMapOptions {
   out?: string;
   /** Extra settle time after the map is ready, for animations/pictures. */
   settleMs?: number;
+  signal?: AbortSignal;
 }
 
 export interface RenderPlan {
@@ -105,7 +106,7 @@ export async function renderMap(
   const suffix = plan.mode === 'view' ? `_${plan.x}_${plan.y}` : '';
   const path = await resolvePngPath(opts.out, `map${opts.mapId}${suffix}_${stamp()}.png`);
 
-  const session = await openSession(projectPath, { viewport: plan.viewport });
+  const session = await openSession(projectPath, { viewport: plan.viewport, signal: opts.signal });
   try {
     if (plan.mode === 'whole_map') {
       await session.call('resizeToMap', plan.viewport.width, plan.viewport.height);

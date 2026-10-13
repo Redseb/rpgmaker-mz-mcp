@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, mkdir, rm, writeFile, access } from 'fs/promises';
 import { tmpdir } from 'os';
-import { join } from 'path';
+import { basename, join } from 'path';
 import { commitStore, CommitContext } from '../src/utils/commit.js';
 import {
   deleteMap,
@@ -107,7 +107,7 @@ describe('deleteMap (integration)', () => {
       await deleteMap(dir, 2);
     });
 
-    const byFile = new Map(context.commits.map((c) => [c.path.split('/').pop(), c]));
+    const byFile = new Map(context.commits.map((c) => [basename(c.path), c]));
     expect(byFile.get('MapInfos.json')?.changed).toBe(true);
     const del = byFile.get('Map002.json');
     expect(del?.deleted).toBe(true);

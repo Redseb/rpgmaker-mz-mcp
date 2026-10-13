@@ -11,7 +11,6 @@ import type {
 
 import { basename } from 'path';
 import { readFileSync } from 'fs';
-import { readFile } from 'fs/promises';
 
 import { validateProjectPath } from './utils/fileHandler.js';
 import { ToolContext, ToolDefinition, buildRegistry, schemaFor, shapeResult } from './registry.js';
@@ -19,6 +18,9 @@ import { CommitContext, commitStore } from './utils/commit.js';
 import { allToolDefinitions } from './tools/allTools.js';
 import { loadProjectTextMetrics } from './tools/projectConfig.js';
 import { setActiveTextMetrics } from './validation/textMetrics.js';
+import { stopHeadlessSessions } from './playtest/session.js';
+import { linkAbortSignals } from './utils/abort.js';
+import { collectInlineImages } from './utils/inlineImages.js';
 
 /**
  * RPG Maker MZ MCP Server
@@ -118,7 +120,7 @@ function progressReporter(
   };
 }
 
-function buildServer(initialProjectPath: string): McpServer {
+function buildServer(initialProjectPath: string, shutdownSignal: AbortSignal): McpServer {
   const server = new McpServer({ name: 'rpgmaker-mz-server', version: serverVersion() });
 
   // The project path is session state, not a constant: it starts from the env
@@ -139,6 +141,7 @@ function buildServer(initialProjectPath: string): McpServer {
         args: Record<string, unknown>,
         extra?: RequestHandlerExtra<ServerRequest, ServerNotification>,
       ): Promise<CallToolResult> => {
+        const cancellation = linkAbortSignals([shutdownSignal, extra?.signal]);
         try {
           if (def.requiresProject !== false) {
             if (!projectPath) {
@@ -158,22 +161,27 @@ function buildServer(initialProjectPath: string): McpServer {
           }
 
           const reportProgress = progressReporter(extra);
-          const result = await runTool(def, { projectPath, setProjectPath, reportProgress }, args);
+          if (cancellation.signal.aborted)
+            throw new Error('Request cancelled or server shutting down.');
+          const result = await runTool(
+            def,
+            { projectPath, setProjectPath, reportProgress, signal: cancellation.signal },
+            args,
+          );
           const content: CallToolResult['content'] = [
             { type: 'text', text: JSON.stringify(result, null, 2) },
           ];
-          for (const file of def.images?.(result, args) ?? []) {
-            try {
-              const data = (await readFile(file)).toString('base64');
-              content.push({ type: 'image', data, mimeType: 'image/png' });
-            } catch {
-              // The path is already in the JSON text; a missing file just isn't inlined.
-            }
+          const inline = await collectInlineImages(def.images?.(result, args) ?? []);
+          content.push(...inline.images);
+          if (inline.metadata.omitted.length) {
+            content.push({ type: 'text', text: JSON.stringify({ inlineImages: inline.metadata }) });
           }
           return { content };
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           return { content: [{ type: 'text', text: `Error: ${message}` }], isError: true };
+        } finally {
+          cancellation.dispose();
         }
       },
     );
@@ -183,8 +191,23 @@ function buildServer(initialProjectPath: string): McpServer {
 }
 
 async function main(): Promise<void> {
-  const server = buildServer(PROJECT_PATH);
+  const controller = new AbortController();
+  const server = buildServer(PROJECT_PATH, controller.signal);
   const transport = new StdioServerTransport();
+  let shutdownTask: Promise<void> | undefined;
+  const shutdown = (): Promise<void> => {
+    shutdownTask ??= (async () => {
+      controller.abort();
+      await stopHeadlessSessions();
+      await server.close();
+    })();
+    return shutdownTask;
+  };
+  const onShutdown = () => void shutdown().catch((error) => console.error('[MCP Shutdown]', error));
+  process.stdin.once('end', onShutdown);
+  process.once('SIGINT', onShutdown);
+  process.once('SIGTERM', onShutdown);
+  server.server.onclose = onShutdown;
   await server.connect(transport);
   console.error('RPG Maker MZ MCP server running on stdio');
 }
