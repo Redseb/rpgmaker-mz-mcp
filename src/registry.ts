@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 
 /**
  * Context passed to every tool handler. Kept as an object (rather than a bare
@@ -39,6 +40,8 @@ export interface ToolDefinition {
   name: string;
   description: string;
   inputSchema: InputShape;
+  /** Optional MCP hints; existing tools retain their current advertised metadata. */
+  annotations?: ToolAnnotations;
   handler: (ctx: ToolContext, args: Record<string, any>) => Promise<unknown>;
   /**
    * True for tools that write to the project. Such tools accept a `dryRun`

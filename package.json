@@ -9,7 +9,9 @@
     "rpgmaker-mz-mcp": "dist/index.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "docs/project-analysis.md",
+    "THIRD_PARTY_NOTICES.md"
   ],
   "engines": {
     "node": ">=18"
@@ -25,6 +27,7 @@
     "format:check": "prettier --check .",
     "test": "vitest run",
     "test:watch": "vitest",
+    "verify:analysis": "npm run build && node scripts/verify-analysis-protocol.mjs",
     "sync:tools": "node scripts/sync-tool-count.mjs",
     "sync:tools:check": "node scripts/sync-tool-count.mjs --check",
     "sync:version": "node scripts/sync-version.mjs",

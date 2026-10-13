@@ -134,7 +134,11 @@ function buildServer(initialProjectPath: string): McpServer {
   for (const def of allToolDefinitions) {
     server.registerTool(
       def.name,
-      { description: def.description, inputSchema: schemaFor(def) },
+      {
+        description: def.description,
+        inputSchema: schemaFor(def),
+        ...(def.annotations ? { annotations: def.annotations } : {}),
+      },
       async (
         args: Record<string, unknown>,
         extra?: RequestHandlerExtra<ServerRequest, ServerNotification>,

@@ -5,13 +5,13 @@
 # RPG Maker MZ MCP Server
 
 [![CI](https://github.com/Redseb/rpgmaker-mz-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Redseb/rpgmaker-mz-mcp/actions/workflows/ci.yml)
-[![Tools](https://img.shields.io/badge/tools-128-e94560.svg)](#available-tools)
+[![Tools](https://img.shields.io/badge/tools-136-e94560.svg)](#available-tools)
 [![MCP](https://img.shields.io/badge/MCP-stdio-e94560.svg)](https://modelcontextprotocol.io/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178c6.svg)](tsconfig.json)
 [![Node.js >=20](https://img.shields.io/badge/node-%3E%3D20-3fa796.svg)](package.json)
 [![License: MIT](https://img.shields.io/badge/License-MIT-3fa796.svg)](#license)
 
-**128 tools** that let an AI assistant read and write an RPG Maker MZ project directly — actors, classes, skills, items, equipment, states, enemies, troops, common events, maps, tiles, tilesets, events, and system settings — instead of hand-editing everything in the editor.
+**136 tools** that let an AI assistant read and write an RPG Maker MZ project directly — actors, classes, skills, items, equipment, states, enemies, troops, common events, maps, tiles, tilesets, events, and system settings — instead of hand-editing everything in the editor.
 
 _"Add a town under the world map, paint it with grass, and drop in a shopkeeper who sells potions"_ → done, in-project, no editor clicks.
 
@@ -78,6 +78,7 @@ New here? Read [SETUP.md](SETUP.md) for the full walkthrough and [EXAMPLES.md](E
 - **Asset awareness** — `list_assets` enumerates valid character/face/tileset/audio names so events never reference a missing file.
 - **See and play the build** — `render_map` screenshots a map exactly as the engine draws it (whole map or a game-screen view) and `run_playtest` drives a scripted headless session (load a state, trigger events, read dialogue, pick choices, walk, auto-battle, screenshot), both reporting console errors and missing assets. Validators prove structure; these show what the player sees.
 - **Correctness layer** — Zod-validated inputs, throw-by-default event validation (a structurally invalid write is refused, not saved-and-warned-about), a cross-file reference linter (`validate_references`), and a dry-run/diff preview on every write.
+- **Read-only project analysis** — focused tools for project summaries, transfer graphs, state readers/writers, readable event outlines, balance outliers, text search, duplicate command windows and static map layout. See [the analysis guide](docs/project-analysis.md) for examples and coverage limits.
 
 ## How it fits together
 
@@ -145,7 +146,7 @@ The easiest path is the `.mcpb` bundle from [Releases](https://github.com/Redseb
 
 ## Available tools
 
-All 128 tools, grouped by area. Tools that write to the project accept an optional `dryRun` argument (see [Dry-run preview](#dry-run-preview)); those that can refuse a structurally invalid write also accept `force` (see [Event validation](#event-validation-throw-by-default)).
+All 136 tools, grouped by area. Tools that write to the project accept an optional `dryRun` argument (see [Dry-run preview](#dry-run-preview)); those that can refuse a structurally invalid write also accept `force` (see [Event validation](#event-validation-throw-by-default)).
 
 <details>
 <summary><strong>Expand the full tool reference</strong></summary>
@@ -314,6 +315,21 @@ Boots the project's own `index.html` in a headless Chromium to check what valida
 - `list_allocated_ids` — which switch / variable / common-event IDs are already spoken for, derived from the project's own JSON; with `id`, every place that one is referenced
 - `next_free_id` — reserve the next unallocated ID(s) instead of picking one by hand
 
+### Project analysis
+
+These are read-only static reports. See [the analysis guide](docs/project-analysis.md) for arguments, examples and interpretation limits.
+
+| Tool | Purpose |
+| --- | --- |
+| `get_project_overview` | Counts, static reachability and a reference-warning sample |
+| `analyze_transfer_graph` | Transfer paths through called common events; optional map-removal simulation |
+| `explain_state_id` | Switch/variable readers, writers and read-modify-write sites |
+| `outline_event` | Readable tree for a map event page, common event or troop page |
+| `analyze_database_balance` | Advisory peer outliers using a non-executing formula parser |
+| `search_project` | Lexical matches in names, dialogue, notes and database text |
+| `find_duplicate_event_blocks` | Repeated command windows for manual extraction review |
+| `analyze_map_layout` | Static tile passage, reachability, repetition and event-position access |
+
 </details>
 
 ## Input validation
@@ -452,6 +468,7 @@ npm run lint:fix      # ESLint with autofix
 npm run format        # Format with Prettier
 npm run format:check  # Check formatting (used in CI)
 npm test              # Vitest
+npm run verify:analysis # Real stdio analysis checks against a temporary JSON-only fixture
 npm run sync:tools    # Re-stamp the tool count into the README + SVGs (see below)
 npm run sync:version  # Re-stamp package.json's version into the packaging manifests
 npm run bundle:mcpb   # Build the one-click Claude Desktop bundle (rpgmaker-mz-mcp.mcpb)
@@ -498,6 +515,7 @@ rpgmaker-mz-mcp/
 │   │                         #   catalog, paint, objects, tilesets, system, assets,
 │   │                         #   event-command builders, event pages, list, validation)
 │   ├── events/               # Pure event-command builders (no I/O)
+│   ├── analysis/             # Read-only static project, event and map analysis
 │   ├── tiles/                # Tile subsystem: codec, autotile solver, paint core,
 │   │                         #   flag codec, and the semantic catalog
 │   ├── playtest/             # Headless engine driver: Chromium discovery, static server,
@@ -530,6 +548,8 @@ rpgmaker-mz-mcp/
 ## Acknowledgements
 
 This project started life as a fork of [k4zuki0539/-rpgmaker-mz-mcp](https://github.com/k4zuki0539/-rpgmaker-mz-mcp) (MIT), which provided the original CRUD scaffolding. It has since grown well beyond that starting point — into full vanilla level-design and game-logic authoring (see [Capabilities](#capabilities)) — and is now maintained as its own project. Thanks to the original author for the foundation.
+
+The project analysis additions adapt MIT-licensed work from RPG Maker MV Ultimate MCP; see [third-party notices](THIRD_PARTY_NOTICES.md).
 
 ## License
 
