@@ -1,4 +1,5 @@
-import { readFile, writeFile, readdir, access, unlink } from 'fs/promises';
+import { readFile, writeFile, readdir, access, unlink, link, rename } from 'fs/promises';
+import { randomUUID } from 'crypto';
 import { join, extname } from 'path';
 
 /**
@@ -15,19 +16,50 @@ export async function readJsonFile<T>(filePath: string): Promise<T> {
   }
 }
 
+export interface JsonWriteOptions {
+  /** Publish a new file exclusively; even a concurrent creator must not be overwritten. */
+  createOnly?: boolean;
+  /** Best-effort conflict check before rename; not a cross-process lock or CAS. */
+  expectedText?: string;
+}
+
 /**
- * Write JSON data to a file.
- *
- * RPG Maker MZ's editor saves its `data/*.json` files as compact, single-line
- * JSON (no indentation). We match that format so that:
- *  - map tile arrays don't explode into thousands of lines, and
- *  - diffs stay minimal and consistent with what the editor itself writes,
- *    which keeps the per-session git-checkpoint workflow readable.
+ * Write JSON data in the editor's compact, single-line format.
+ * Optional publication guards stage a complete file before linking/renaming it;
+ * existing callers keep their ordinary write behavior.
  */
-export async function writeJsonFile(filePath: string, data: any): Promise<void> {
+export async function writeJsonFile(
+  filePath: string,
+  data: any,
+  options?: JsonWriteOptions,
+): Promise<void> {
   try {
     const jsonString = JSON.stringify(data);
-    await writeFile(filePath, jsonString, 'utf-8');
+    if (!options) {
+      await writeFile(filePath, jsonString, 'utf-8');
+      return;
+    }
+    const stage = `${filePath}.mcp-stage-${randomUUID()}`;
+    try {
+      await writeFile(stage, jsonString, { encoding: 'utf-8', flag: 'wx' });
+      if (
+        options.expectedText !== undefined &&
+        (await readFile(filePath, 'utf-8')) !== options.expectedText
+      ) {
+        throw new Error(
+          `File changed during map creation: ${filePath}; retry after the other edit finishes`,
+        );
+      }
+      if (options.createOnly) await link(stage, filePath);
+      else await rename(stage, filePath);
+    } finally {
+      await unlink(stage).catch((error: NodeJS.ErrnoException) => {
+        // Cleanup cannot turn a published file into a reported failed commit,
+        // or mask the original publication failure. Report leftover staging files.
+        if (error.code !== 'ENOENT')
+          console.error(`Unable to remove staging file ${stage}: ${error.message}`);
+      });
+    }
   } catch (error) {
     throw new Error(`Failed to write JSON file ${filePath}: ${error}`);
   }

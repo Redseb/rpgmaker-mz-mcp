@@ -25,7 +25,7 @@ describe('normalizeProjectPath', () => {
   });
 
   it('resolves other paths to absolute', () => {
-    expect(normalizeProjectPath('/abs/path')).toBe('/abs/path');
+    expect(normalizeProjectPath('/abs/path')).toBe(resolve('/abs/path'));
     expect(normalizeProjectPath('rel/path')).toBe(resolve('rel/path'));
   });
 });

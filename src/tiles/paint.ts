@@ -16,6 +16,8 @@ import { autotileType, getAutotileKind, isSameKindTile, makeAutotileId } from '.
 export interface LayerAccess {
   width: number;
   height: number;
+  loopHorizontal?: boolean;
+  loopVertical?: boolean;
   get(x: number, y: number): number;
   set(x: number, y: number, tileId: number): void;
 }
@@ -27,8 +29,10 @@ export interface LayerAccess {
  */
 function neighborsOf(layer: LayerAccess, x: number, y: number, ref: number): Neighbors {
   const same = (dx: number, dy: number): boolean => {
-    const nx = x + dx;
-    const ny = y + dy;
+    let nx = x + dx;
+    let ny = y + dy;
+    if (layer.loopHorizontal) nx = (nx + layer.width) % layer.width;
+    if (layer.loopVertical) ny = (ny + layer.height) % layer.height;
     if (nx < 0 || nx >= layer.width || ny < 0 || ny >= layer.height) return false;
     return isSameKindTile(layer.get(nx, ny), ref);
   };
@@ -69,8 +73,10 @@ export function applyAutotiling(layer: LayerAccess, cells: { x: number; y: numbe
   for (const { x, y } of cells) {
     for (let dy = -1; dy <= 1; dy++) {
       for (let dx = -1; dx <= 1; dx++) {
-        const nx = x + dx;
-        const ny = y + dy;
+        let nx = x + dx;
+        let ny = y + dy;
+        if (layer.loopHorizontal) nx = (nx + layer.width) % layer.width;
+        if (layer.loopVertical) ny = (ny + layer.height) % layer.height;
         if (nx < 0 || nx >= layer.width || ny < 0 || ny >= layer.height) continue;
         const key = ny * layer.width + nx;
         if (seen.has(key)) continue;

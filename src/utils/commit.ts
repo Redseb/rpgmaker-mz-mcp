@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from 'async_hooks';
 import { readFile } from 'fs/promises';
-import { writeJsonFile, deleteFile, fileExists } from './fileHandler.js';
+import { writeJsonFile, deleteFile, fileExists, JsonWriteOptions } from './fileHandler.js';
 
 /**
  * A single leaf-level difference between the old and new file contents.
@@ -113,11 +113,18 @@ async function readOld(filePath: string): Promise<unknown> {
  * Either way the result is pushed onto the active CommitContext (if any) so the
  * dispatcher can surface a preview.
  */
-export async function commitChange(filePath: string, newData: unknown): Promise<CommitResult> {
+export async function commitChange(
+  filePath: string,
+  newData: unknown,
+  options?: JsonWriteOptions,
+): Promise<CommitResult> {
   const context = commitStore.getStore();
   const dryRun = context?.dryRun ?? false;
 
   const oldData = await readOld(filePath);
+  if (options?.createOnly && oldData !== undefined) {
+    throw new Error(`Refusing to overwrite existing file ${filePath}`);
+  }
   const diff = diffJson(oldData, newData);
   const result: CommitResult = {
     path: filePath,
@@ -127,7 +134,7 @@ export async function commitChange(filePath: string, newData: unknown): Promise<
   };
 
   if (!dryRun && result.changed) {
-    await writeJsonFile(filePath, newData);
+    await writeJsonFile(filePath, newData, options);
   }
 
   context?.commits.push(result);

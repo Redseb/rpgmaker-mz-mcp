@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { readFile, realpath, unlink } from 'fs/promises';
 import {
   readJsonFile,
   readJsonArraySoft,
@@ -6,7 +7,7 @@ import {
   getDataPath,
   fileExists,
 } from '../utils/fileHandler.js';
-import { commitChange, commitDelete } from '../utils/commit.js';
+import { commitChange, commitDelete, commitStore } from '../utils/commit.js';
 import {
   MapData,
   MapEvent,
@@ -27,6 +28,7 @@ import { summarizeEventResult, summarizeMapResult } from '../utils/responseSumma
 /** Dimensions the RPG Maker MZ editor defaults to when creating a new map. */
 const DEFAULT_MAP_WIDTH = 17;
 const DEFAULT_MAP_HEIGHT = 13;
+const mapCreationQueues = new Map<string, Promise<void>>();
 
 /**
  * The pre-commit gate every event-writing tool installs: validate the event that
@@ -343,6 +345,30 @@ export async function createMap(
     parentId?: number;
     tilesetId?: number;
   },
+  /** Internal generation seam; not exposed by the create_map tool schema. */
+  preparedMap?: MapData,
+): Promise<{ mapId: number; mapInfo: MapInfo; map: MapData }> {
+  const key = await realpath(projectPath);
+  const previous = mapCreationQueues.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const pending = new Promise<void>((done) => {
+    release = done;
+  });
+  const tail = previous.then(() => pending);
+  mapCreationQueues.set(key, tail);
+  await previous;
+  try {
+    return await createMapUnlocked(projectPath, options, preparedMap);
+  } finally {
+    release();
+    if (mapCreationQueues.get(key) === tail) mapCreationQueues.delete(key);
+  }
+}
+
+async function createMapUnlocked(
+  projectPath: string,
+  options: { name: string; width?: number; height?: number; parentId?: number; tilesetId?: number },
+  preparedMap?: MapData,
 ): Promise<{ mapId: number; mapInfo: MapInfo; map: MapData }> {
   const width = options.width ?? DEFAULT_MAP_WIDTH;
   const height = options.height ?? DEFAULT_MAP_HEIGHT;
@@ -353,7 +379,18 @@ export async function createMap(
     throw new Error(`Map dimensions must be positive integers (got ${width}x${height})`);
   }
 
-  const infos = await getMapInfos(projectPath);
+  if (!Number.isInteger(parentId) || parentId < 0) throw new Error('parentId must be nonnegative');
+  const infosPath = getDataPath(projectPath, 'MapInfos.json');
+  const originalInfos = await readFile(infosPath, 'utf-8');
+  const infos = JSON.parse(originalInfos) as (MapInfo | null)[];
+  if (!Array.isArray(infos) || (infos.length > 0 && infos[0] !== null)) {
+    throw new Error('MapInfos must be a one-indexed array');
+  }
+  for (let index = 1; index < infos.length; index++) {
+    if (infos[index] && infos[index]!.id !== index) {
+      throw new Error('MapInfos IDs must match their indexes');
+    }
+  }
 
   // A non-root parent must point at an existing map, or the map is orphaned in
   // the tree.
@@ -395,12 +432,33 @@ export async function createMap(
   };
   infos[newId] = mapInfo;
 
-  const map = blankMapData(width, height, tilesetId);
+  const map = preparedMap ? structuredClone(preparedMap) : blankMapData(width, height, tilesetId);
+  if (
+    map.width !== width ||
+    map.height !== height ||
+    map.tilesetId !== tilesetId ||
+    !Array.isArray(map.data) ||
+    map.data.length !== width * height * 6
+  ) {
+    throw new Error(
+      'Prepared map must match the requested dimensions and tileset and contain six complete layers',
+    );
+  }
 
   // Write the map file first, then register it in the tree — both through the
   // commit choke point so dry-run previews both writes.
-  await commitChange(mapPath, map);
-  await commitChange(getDataPath(projectPath, 'MapInfos.json'), infos);
+  const context = commitStore.getStore();
+  const firstCommit = context?.commits.length ?? 0;
+  let created = false;
+  try {
+    const result = await commitChange(mapPath, map, { createOnly: true });
+    created = !result.dryRun;
+    await commitChange(infosPath, infos, { expectedText: originalInfos });
+  } catch (error) {
+    if (created) await unlink(mapPath);
+    context?.commits.splice(firstCommit);
+    throw error;
+  }
 
   return { mapId: newId, mapInfo, map };
 }

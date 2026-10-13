@@ -58,6 +58,25 @@ describe('applyAutotiling', () => {
     applyAutotiling(g, [{ x: 1, y: 1 }]);
     expect(g.get(1, 1)).toBe(5);
   });
+
+  it.each(['horizontal', 'vertical'] as const)(
+    'reshapes the opposite edge of a %s loop',
+    (axis) => {
+      const g = grid(5, 5);
+      g.loopHorizontal = axis === 'horizontal';
+      g.loopVertical = axis === 'vertical';
+      const a = axis === 'horizontal' ? { x: 0, y: 2 } : { x: 2, y: 0 };
+      const b = axis === 'horizontal' ? { x: 4, y: 2 } : { x: 2, y: 4 };
+      g.set(a.x, a.y, A2);
+      g.set(b.x, b.y, A2);
+      applyAutotiling(g, [a]);
+      expect(getAutotileShape(g.get(a.x, a.y))).not.toBe(47);
+      expect(getAutotileShape(g.get(b.x, b.y))).not.toBe(47);
+      g.set(a.x, a.y, 0);
+      applyAutotiling(g, [a]);
+      expect(getAutotileShape(g.get(b.x, b.y))).toBe(47);
+    },
+  );
 });
 
 /** Scaffold a project with one blank map to paint on. */
